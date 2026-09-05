@@ -1,0 +1,7 @@
+---
+- name: Configure the downloads target
+  hosts: download_servers
+  become: true
+  roles:
+    - common_baseline
+    - downloads

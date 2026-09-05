@@ -1,0 +1,27 @@
+---
+home_network:
+  subnet: 10.42.0.0/24
+  gateway: 10.42.0.1
+  dns_servers: [10.42.0.211]
+  dns_status: split_dns_verified
+  dhcp:
+    managed_static_range:
+      first: 10.42.0.200
+      last: 10.42.0.254
+    range_confirmed_free_before_allocation: true
+  infrastructure:
+    - { id: node1, address: 10.42.0.99, role: proxmox }
+    - { id: 200, address: 10.42.0.200, role: plan-runner }
+    - { id: 202, address: 10.42.0.202, role: caddy }
+    - { id: 203, address: 10.42.0.203, role: jellyfin }
+    - { id: 204, address: 10.42.0.204, role: media-automation }
+    - { id: 205, address: 10.42.0.205, role: downloads }
+    - { id: 206, address: 10.42.0.206, role: miniflux }
+    - { id: 207, address: 10.42.0.207, role: pocket-id }
+    - { id: 210, address: 10.42.0.210, role: pangolin-connector }
+    - { id: 211, address: 10.42.0.211, role: network-ops }
+    - { id: 213, address: 10.42.0.213, role: nerocd }
+  router:
+    current: asus
+    opnsense_replacement: deferred_until_n100_ready
+  vlans: deferred_until_needed

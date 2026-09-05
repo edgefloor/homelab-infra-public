@@ -1,0 +1,12 @@
+[Unit]
+Description=Initialize NVIDIA device nodes before Proxmox guests
+After=local-fs.target
+Before=pve-guests.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nvidia-modprobe -c 0 -u
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

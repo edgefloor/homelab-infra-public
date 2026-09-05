@@ -1,0 +1,226 @@
+---
+- name: Install Tuwunel runtime helpers
+  ansible.builtin.apt:
+    name:
+      - openssl
+      - python3
+      - tzdata
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the release cache
+  ansible.builtin.file:
+    path: /var/cache/homelab-tools
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download the official Tuwunel package
+  ansible.builtin.get_url:
+    url: "{{ tuwunel_package_url }}"
+    dest: "/var/cache/homelab-tools/tuwunel-{{ tuwunel_version }}.deb"
+    checksum: "sha256:{{ tuwunel_package_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the pinned Tuwunel package
+  ansible.builtin.apt:
+    deb: "/var/cache/homelab-tools/tuwunel-{{ tuwunel_version }}.deb"
+    state: present
+  notify: Restart Tuwunel
+
+- name: Generate the registration shared secret
+  ansible.builtin.command:
+    cmd: openssl rand -hex 32
+  args:
+    creates: /etc/tuwunel/.registration_shared_secret
+  register: tuwunel_registration_secret
+  no_log: true
+
+- name: Store the registration shared secret
+  ansible.builtin.copy:
+    content: "{{ tuwunel_registration_secret.stdout }}\n"
+    dest: /etc/tuwunel/.registration_shared_secret
+    owner: root
+    group: tuwunel
+    mode: '0640'
+  when: tuwunel_registration_secret.changed
+  no_log: true
+  notify: Restart Tuwunel
+
+- name: Install the Tuwunel configuration
+  ansible.builtin.template:
+    src: tuwunel.toml.j2
+    dest: /etc/tuwunel/tuwunel.toml
+    owner: root
+    group: tuwunel
+    mode: '0640'
+  notify: Restart Tuwunel
+
+- name: Enable and start Tuwunel
+  ansible.builtin.systemd_service:
+    name: tuwunel.service
+    enabled: true
+    state: started
+
+- name: Create the CrowdSec Matrix bridge credential directory
+  ansible.builtin.file:
+    path: "{{ crowdsec_matrix_bridge_credentials_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Inspect externally provisioned CrowdSec Matrix bridge credentials
+  ansible.builtin.stat:
+    path: "{{ crowdsec_matrix_bridge_credentials_dir }}/{{ item }}"
+    get_checksum: false
+  loop:
+    - matrix-access-token
+    - matrix-room-health
+    - matrix-room-security
+    - matrix-room-releases
+    - matrix-room-vulnerabilities
+    - matrix-room-agent
+    - webhook-secret
+  register: crowdsec_matrix_bridge_credentials
+  no_log: true
+
+- name: Require root-only CrowdSec Matrix bridge credentials
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - item.stat.pw_name == 'root'
+      - item.stat.mode == '0600'
+    fail_msg: >-
+      Provision all CrowdSec Matrix bridge credentials as root-owned mode 0600
+      files under {{ crowdsec_matrix_bridge_credentials_dir }} before applying
+      this role.
+  loop: "{{ crowdsec_matrix_bridge_credentials.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  no_log: true
+
+- name: Create the local IP country database directory
+  ansible.builtin.file:
+    path: "{{ crowdsec_ip_country_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the local IP country lookup
+  ansible.builtin.copy:
+    src: ip_country_lookup.py
+    dest: /usr/local/libexec/ip_country_lookup.py
+    owner: root
+    group: root
+    mode: '0755'
+  notify: Restart CrowdSec Matrix bridge
+
+- name: Install the IP country database updater
+  ansible.builtin.copy:
+    src: update_ip_country_db.py
+    dest: /usr/local/libexec/update-ip-country-db
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the IP country database update units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - ip-country-db-update.service
+    - ip-country-db-update.timer
+  register: ip_country_update_units
+
+- name: Reload systemd for the IP country database updater
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: ip_country_update_units.changed
+
+- name: Seed or refresh the local IP country database
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/update-ip-country-db
+      - --data-dir
+      - "{{ crowdsec_ip_country_data_dir }}"
+  register: ip_country_database_update
+  changed_when: "'updated=0' not in ip_country_database_update.stdout"
+
+- name: Enable the daily IP country database update
+  ansible.builtin.systemd_service:
+    name: ip-country-db-update.timer
+    enabled: true
+    state: started
+
+- name: Install the CrowdSec Matrix bridge
+  ansible.builtin.copy:
+    src: crowdsec_matrix_bridge.py
+    dest: /usr/local/libexec/crowdsec-matrix-bridge
+    owner: root
+    group: root
+    mode: '0755'
+  notify: Restart CrowdSec Matrix bridge
+
+- name: Install the CrowdSec Matrix bridge service
+  ansible.builtin.template:
+    src: crowdsec-matrix-bridge.service.j2
+    dest: /etc/systemd/system/crowdsec-matrix-bridge.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: crowdsec_matrix_bridge_service
+  notify: Restart CrowdSec Matrix bridge
+
+- name: Reload systemd for the CrowdSec Matrix bridge
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: crowdsec_matrix_bridge_service.changed
+
+- name: Enable and start the CrowdSec Matrix bridge
+  ansible.builtin.systemd_service:
+    name: crowdsec-matrix-bridge.service
+    enabled: true
+    state: started
+
+- name: Apply pending Tuwunel changes before validation
+  ansible.builtin.meta: flush_handlers
+
+- name: Check the local Matrix client endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ tuwunel_port }}/_matrix/client/versions"
+    status_code: 200
+  register: tuwunel_health
+  retries: 30
+  delay: 2
+  until: tuwunel_health.status == 200
+
+- name: Check the local CrowdSec Matrix bridge endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ crowdsec_matrix_bridge_port }}/healthz"
+    status_code: 200
+  register: crowdsec_matrix_bridge_health
+  retries: 15
+  delay: 2
+  until: crowdsec_matrix_bridge_health.status == 200
+
+- name: Remove the retired single-room Matrix credential
+  ansible.builtin.file:
+    path: "{{ crowdsec_matrix_bridge_credentials_dir }}/matrix-room-id"
+    state: absent
+
+- name: Verify the installed Tuwunel package version
+  ansible.builtin.command:
+    cmd: dpkg-query -W -f=${Version} tuwunel
+  register: tuwunel_installed_version
+  changed_when: false
+  failed_when: tuwunel_installed_version.stdout != tuwunel_version + '-1'

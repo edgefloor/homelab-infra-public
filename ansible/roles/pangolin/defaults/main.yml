@@ -1,0 +1,45 @@
+---
+pangolin_version: 1.22.2
+pangolin_commit: 17375348b0769c26b38aafa4d2a6010b8ad9772d
+pangolin_image: docker.io/fosrl/pangolin:ee-1.22.2@sha256:ea467f8ac51714daf7ad12939d921eb8bc8a459b33ddf42fb0949244010193c2
+gerbil_version: 1.5.1
+gerbil_image: docker.io/fosrl/gerbil:1.5.1@sha256:e8010d0354d7dc3b8cb1c80d1ae9d961c02e8b1fccc353ef1dfc37631722f7f6
+traefik_version: v3.7
+traefik_image: docker.io/traefik:v3.7@sha256:f86a2cab1b5c649070c49f883c743dd32d8485a56e3368c5f93b9e91f1e91259
+badger_version: v1.7.0
+crowdsec_version: 1.8.1
+crowdsec_image: docker.io/crowdsecurity/crowdsec:v1.8.1-debian@sha256:ab1bdb61a072154d478ad6c625b8e62c7f79a727b2740209d2128dd51d69d58d
+crowdsec_traefik_plugin_version: v1.7.1
+crowdsec_firewall_bouncer_version: 0.0.36
+crowdsec_repository_distribution: bookworm
+crowdsec_repository_key_sha256: cd5729fe6f95d29efc48f1cfe63e0d4a3088506cf99f3cf74b572c4b70429980
+crowdsec_console_enrollment_key: "{{ lookup('ansible.builtin.env', 'CROWDSEC_CONSOLE_ENROLLMENT_KEY') }}"
+crowdsec_console_engine_name: pangolin-vps
+crowdsec_matrix_webhook_secret_file: /etc/crowdsec-matrix-webhook-secret
+crowdsec_matrix_webhook_url: https://matrix.homelab.example/_crowdsec/webhook
+crowdsec_trusted_ranges:
+  - 127.0.0.0/8
+  - ::1/128
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+crowdsec_trusted_dynamic_hosts:
+  - homelab.example
+pangolin_base_domain: homelab.example
+pangolin_dashboard_domain: pangolin.homelab.example
+pangolin_letsencrypt_email: admin@homelab.example
+pangolin_install_dir: /opt/pangolin
+pangolin_docker_host_gateway: 172.30.0.1
+matrix_server_domain: matrix.homelab.example
+matrix_rtc_domain: matrix-rtc.homelab.example
+matrix_tuwunel_port: 6167
+matrix_bridge_port: 8789
+matrix_rtc_livekit_port: 7880
+matrix_rtc_jwt_port: 8081
+matrix_rtc_turn_tls_port: 5349
+matrix_rtc_tcp_port: 7881
+matrix_rtc_udp_port: 7882
+matrix_rtc_turn_udp_port: 3478
+matrix_rtc_turn_relay_start: 50300
+matrix_rtc_turn_relay_end: 50400
+matrix_rtc_turn_tls_backend_port: 5350

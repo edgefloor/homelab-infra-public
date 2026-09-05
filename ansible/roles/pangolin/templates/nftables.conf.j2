@@ -1,0 +1,26 @@
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet homelab_filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        ct state invalid drop
+        ct state established,related accept
+        iifname "lo" accept
+
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept
+
+        tcp dport { 22, 80, 443, {{ matrix_rtc_turn_tls_port }}, {{ matrix_rtc_tcp_port }} } accept
+        udp dport { 443, {{ matrix_rtc_udp_port }}, {{ matrix_rtc_turn_udp_port }}, {{ matrix_rtc_turn_relay_start }}-{{ matrix_rtc_turn_relay_end }}, 51820, 21820 } accept
+
+        iifname "docker0" tcp dport { {{ matrix_tuwunel_port }}, {{ matrix_bridge_port }}, {{ matrix_rtc_livekit_port }}, {{ matrix_rtc_jwt_port }}, {{ matrix_rtc_turn_tls_backend_port }} } accept
+        iifname "br-*" tcp dport { {{ matrix_tuwunel_port }}, {{ matrix_bridge_port }}, {{ matrix_rtc_livekit_port }}, {{ matrix_rtc_jwt_port }}, {{ matrix_rtc_turn_tls_backend_port }} } accept
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+    }
+}

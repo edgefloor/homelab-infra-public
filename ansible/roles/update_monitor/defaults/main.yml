@@ -1,0 +1,26 @@
+---
+update_monitor_trivy_version: 0.74.0
+update_monitor_trivy_archive_url: >-
+  https://github.com/aquasecurity/trivy/releases/download/v{{ update_monitor_trivy_version }}/trivy_{{ update_monitor_trivy_version }}_Linux-64bit.tar.gz
+update_monitor_trivy_archive_sha256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+update_monitor_go_version: 1.26.7
+update_monitor_go_archive_url: >-
+  https://go.dev/dl/go{{ update_monitor_go_version }}.linux-amd64.tar.gz
+update_monitor_go_archive_sha256: ffb5f8de10c62550dfddab66b36b57030721e0a44a3218e9e1181d7b59f121ca
+update_monitor_govulncheck_version: 1.7.0
+update_monitor_system_name: "{{ beszel_agent_system_name | default(inventory_hostname) }}"
+update_monitor_webhook_url: https://matrix.homelab.example/_crowdsec/webhook
+update_monitor_webhook_secret: "{{ lookup('env', 'HOMELAB_UPDATE_WEBHOOK_SECRET') }}"
+update_monitor_credentials_dir: /etc/homelab-update-monitor
+update_monitor_state_dir: /var/lib/homelab-update-monitor
+update_monitor_cache_dir: /var/cache/homelab-update-monitor
+update_monitor_release_notifier_enabled: false
+update_monitor_release_webhook_url: http://127.0.0.1:8789/crowdsec
+# Native Go executables plus installed-library roots from the deployment contract.
+update_monitor_extra_go_binaries: []
+update_monitor_go_binaries: "{{ ['/usr/local/bin/beszel-agent'] + update_monitor_extra_go_binaries }}"
+update_monitor_config_dir: /tmp/homelab-security-config
+update_monitor_external_guests:
+  - {id: 112, name: next-plaid}
+  - {id: 113, name: firecrawl}
+  - {id: 115, name: eu-law-db}

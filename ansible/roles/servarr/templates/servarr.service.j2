@@ -1,0 +1,18 @@
+[Unit]
+Description={{ app.display_name }} media automation service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0002
+ExecStart=/opt/{{ app.name }}/current/{{ app.display_name }} -nobrowser -data=/var/lib/{{ app.name }}/
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

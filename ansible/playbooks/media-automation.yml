@@ -1,0 +1,9 @@
+---
+- name: Configure the media automation target
+  hosts: media_automation
+  become: true
+  roles:
+    - common_baseline
+    - seerr
+    - servarr
+    - shelfmark

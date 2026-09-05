@@ -1,0 +1,62 @@
+---
+- name: Install the homelab Codex agent runtime
+  hosts: plan_runners
+  become: true
+  roles:
+    - homelab_agent
+
+- name: Install restricted homelab agent access on managed services
+  hosts: homelab_agent_targets
+  become: true
+  vars:
+    homelab_agent_public_key: "{{ hostvars['plan-runner']['homelab_agent_public_key'] }}"
+  roles:
+    - homelab_agent_target
+
+- name: Read the existing non-admin Matrix bot credentials
+  hosts: tuwunel_servers
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Read Matrix credentials for the homelab agent
+      ansible.builtin.slurp:
+        src: "/etc/crowdsec-matrix-bridge/{{ item }}"
+      loop:
+        - matrix-access-token
+        - matrix-room-agent
+        - matrix-room-health
+        - matrix-room-vulnerabilities
+      register: homelab_agent_matrix_credential_files
+      no_log: true
+
+    - name: Publish Matrix credentials for the plan-runner play
+      ansible.builtin.set_fact:
+        homelab_agent_matrix_credentials: >-
+          {{
+            dict(
+              homelab_agent_matrix_credential_files.results
+              | map(attribute='item')
+              | zip(
+                  homelab_agent_matrix_credential_files.results
+                  | map(attribute='content')
+                  | map('b64decode')
+                  | map('trim')
+                )
+            )
+          }}
+      no_log: true
+
+- name: Configure the Matrix-triggered homelab agent service
+  hosts: plan_runners
+  become: true
+  vars:
+    homelab_agent_matrix_access_token: >-
+      {{ hostvars['pangolin']['homelab_agent_matrix_credentials']['matrix-access-token'] }}
+    homelab_agent_matrix_room: >-
+      {{ hostvars['pangolin']['homelab_agent_matrix_credentials']['matrix-room-agent'] }}
+    homelab_agent_matrix_health_room: >-
+      {{ hostvars['pangolin']['homelab_agent_matrix_credentials']['matrix-room-health'] }}
+    homelab_agent_matrix_vulnerabilities_room: >-
+      {{ hostvars['pangolin']['homelab_agent_matrix_credentials']['matrix-room-vulnerabilities'] }}
+  roles:
+    - homelab_agent_service

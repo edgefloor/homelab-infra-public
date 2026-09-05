@@ -1,0 +1,146 @@
+---
+- name: Require the canonical routing inventory
+  ansible.builtin.assert:
+    that:
+      - homelab_routing.schema_version == 1
+      - homelab_routing.routes | length > 0
+    fail_msg: inventory/routes.yml must define the version 1 routing inventory
+
+- name: Initialize managed Cloudflare routes
+  ansible.builtin.set_fact:
+    cloudflare_managed_routes: []
+
+- name: Derive managed Cloudflare routes from the canonical inventory
+  ansible.builtin.set_fact:
+    cloudflare_managed_routes: >-
+      {{
+        cloudflare_managed_routes +
+        [{'name': item.hostname, 'target': item.public_target}]
+      }}
+  loop: "{{ homelab_routing.routes }}"
+  loop_control:
+    label: "{{ item.hostname }} -> {{ item.public_target }}"
+  when: item.public_target != 'internal_only'
+
+- name: Install Cloudflare DDNS runtime packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - dnsutils
+      - python3
+    state: present
+
+- name: Check for the root-only Cloudflare DDNS environment file
+  ansible.builtin.stat:
+    path: "{{ cloudflare_ddns_environment_file }}"
+  register: cloudflare_ddns_environment
+
+- name: Require the externally provisioned Cloudflare DDNS token
+  ansible.builtin.assert:
+    that:
+      - cloudflare_ddns_environment.stat.exists
+      - cloudflare_ddns_environment.stat.isreg
+      - cloudflare_ddns_environment.stat.pw_name == 'root'
+      - cloudflare_ddns_environment.stat.mode == '0600'
+    fail_msg: >-
+      Provision {{ cloudflare_ddns_environment_file }} as a root-owned mode 0600
+      file containing CF_API_TOKEN before applying this role.
+
+- name: Install the Cloudflare DDNS updater
+  ansible.builtin.template:
+    src: cloudflare-ddns.py.j2
+    dest: /usr/local/libexec/cloudflare-ddns
+    owner: root
+    group: root
+    mode: '0755'
+  notify: Run Cloudflare DDNS
+
+- name: Install the Cloudflare DDNS service
+  ansible.builtin.template:
+    src: cloudflare-ddns.service.j2
+    dest: /etc/systemd/system/cloudflare-ddns.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Run Cloudflare DDNS
+
+- name: Install the Cloudflare DDNS timer
+  ansible.builtin.template:
+    src: cloudflare-ddns.timer.j2
+    dest: /etc/systemd/system/cloudflare-ddns.timer
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Run Cloudflare DDNS
+
+- name: Enable and start the Cloudflare DDNS timer
+  ansible.builtin.systemd_service:
+    name: cloudflare-ddns.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply the initial Cloudflare DDNS update
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the Cloudflare DDNS service result
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - show
+      - cloudflare-ddns.service
+      - --property=Result
+      - --value
+  register: cloudflare_ddns_result
+  changed_when: false
+  failed_when: cloudflare_ddns_result.stdout != 'success'
+
+- name: Verify the Cloudflare DDNS timer is active
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - is-active
+      - cloudflare-ddns.timer
+  register: cloudflare_ddns_timer
+  changed_when: false
+  failed_when: cloudflare_ddns_timer.stdout != 'active'
+
+- name: Read the current home public IPv4 for route validation
+  ansible.builtin.uri:
+    url: "{{ cloudflare_ddns_public_ip_url }}"
+    return_content: true
+  register: cloudflare_ddns_public_ip_response
+
+- name: Prepare expected public routing targets
+  ansible.builtin.set_fact:
+    cloudflare_expected_public_addresses:
+      home_dynamic: >-
+        {{
+          cloudflare_ddns_public_ip_response.content |
+          regex_findall('(?m)^ip=([0-9.]+)$') |
+          first
+        }}
+      pangolin_vps: "{{ homelab_routing.pangolin_vps_address }}"
+      internal_caddy: "{{ homelab_routing.caddy_address }}"
+
+- name: Verify every declared public DNS target
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - +time=3
+      - +tries=1
+      - '@1.1.1.1'
+      - "{{ item.hostname }}"
+      - A
+  loop: "{{ homelab_routing.routes }}"
+  loop_control:
+    label: >-
+      {{ item.hostname }} ->
+      {{ cloudflare_expected_public_addresses[item.public_target] | default('not published') }}
+  register: cloudflare_public_route_resolution
+  changed_when: false
+  failed_when: >-
+    cloudflare_public_route_resolution.stdout | trim !=
+    cloudflare_expected_public_addresses[item.public_target]
+  when: item.public_target != 'internal_only'

@@ -1,0 +1,34 @@
+---
+- name: Prepare protected guest endpoint configuration
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ defense_guest.id }}", --, install, -d, -m, '0700', /etc/homelab-agent]
+  changed_when: false
+
+- name: Install guest evidence runtime prerequisites
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ defense_guest.id }}", --, apt-get, install, -y, binutils, file, iproute2, util-linux]
+  changed_when: false
+
+- name: Stage the explicit guest unit map
+  ansible.builtin.copy:
+    src: "/tmp/homelab-security-config/{{ defense_guest.name }}-units.json"
+    dest: "/var/lib/homelab-update-monitor/guest-staging/{{ defense_guest.name }}-units.json"
+    mode: '0600'
+
+- name: Stage bounded guest evidence policy
+  ansible.builtin.copy:
+    content: "{{ {'config_roots': defense_guest.config_roots, 'max_calls': 160, 'max_total_bytes': 8388608, 'max_seconds': 1800} | to_json }}"
+    dest: "/var/lib/homelab-update-monitor/guest-staging/{{ defense_guest.name }}-evidence-policy.json"
+    mode: '0600'
+
+- name: Install bounded guest endpoints and policy
+  ansible.builtin.command:
+    argv: [pct, push, "{{ defense_guest.id }}", "{{ item.src }}", "{{ item.dest }}", --perms, "{{ item.mode }}"]
+  loop:
+    - {src: /usr/local/libexec/homelab-agent-remote, dest: /usr/local/libexec/homelab-agent-remote, mode: '0755'}
+    - {src: /usr/local/libexec/homelab-evidence-gateway, dest: /usr/local/libexec/homelab-evidence-gateway, mode: '0755'}
+    - {src: /usr/local/libexec/homelab_evidence_sources.py, dest: /usr/local/libexec/homelab_evidence_sources.py, mode: '0644'}
+    - {src: /usr/local/bin/govulncheck, dest: /usr/local/bin/govulncheck, mode: '0755'}
+    - {src: "/var/lib/homelab-update-monitor/guest-staging/{{ defense_guest.name }}-units.json", dest: /etc/homelab-agent/units.json, mode: '0600'}
+    - {src: "/var/lib/homelab-update-monitor/guest-staging/{{ defense_guest.name }}-evidence-policy.json", dest: /etc/homelab-agent/evidence-policy.json, mode: '0600'}
+  changed_when: true

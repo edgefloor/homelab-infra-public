@@ -1,0 +1,10 @@
+[Unit]
+Description=Check defensive action recovery independently of the agent
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+Unit=homelab-defense-recovery.service
+
+[Install]
+WantedBy=timers.target

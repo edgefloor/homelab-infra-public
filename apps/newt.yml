@@ -1,0 +1,20 @@
+---
+schema_version: 1
+id: newt
+name: Pangolin Newt connector
+upstream:
+  repository: https://github.com/fosrl/newt
+  release: 1.16.0
+  commit: 0e415f0a01223dd53d19185083048e0017c755b3
+  distribution: official_binary
+runtime: native_systemd
+environments:
+  staging: { target: pangolin-connector, status: deployed_and_validated }
+  production: { target: pangolin-connector, status: connected_to_remote_platform }
+routing: { caddy: none, pangolin: none }
+health:
+  local_url: https://pangolin.homelab.example/api/v1/
+  expected_units: [newt.service]
+state:
+  paths: [/etc/newt, /root/.config/newt-client]
+  backup_required_before_cutover: true

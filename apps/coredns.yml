@@ -1,0 +1,20 @@
+---
+schema_version: 1
+id: coredns
+name: CoreDNS internal resolver
+upstream:
+  repository: https://github.com/coredns/coredns
+  release: v1.14.7
+  commit: 427fc80ed9ca47f354585eb30a3f1332950856c4
+  distribution: official_binary
+runtime: native_systemd
+environments:
+  staging: { target: network-ops, status: deployed_and_validated }
+  production: { target: network-ops, status: active_and_client_verified }
+routing: { caddy: none, pangolin: none }
+health:
+  local_url: http://127.0.0.1:8080/health
+  expected_units: [coredns.service]
+state:
+  paths: [/etc/coredns]
+  backup_required_before_cutover: false

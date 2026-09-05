@@ -1,0 +1,30 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+*.agekey
+*.pem
+*.key
+
+# OpenTofu local state and caches
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Ansible local artifacts
+*.retry
+
+# Python local caches
+__pycache__/
+*.py[cod]
+
+# Editor and operating-system artifacts
+.DS_Store
+.idea/
+.vscode/
+
+# LikeC4 local dependencies and generated site
+node_modules/
+architecture/likec4/dist/

@@ -1,0 +1,71 @@
+#!/bin/bash
+set -eu
+
+# Phase 0 production deployment boundary. This file deliberately contains no
+# credential paths and no deployment implementation. Phase 1 installs the fixed,
+# separately root-owned payload only after its implementation has been reviewed.
+readonly WRAPPER_PATH=/usr/local/sbin/homelab-production-deploy
+readonly PAYLOAD_PATH=/usr/local/libexec/homelab-production-phase1
+readonly CONFIG_PATH=/etc/homelab-production/deployment.conf
+readonly REPOSITORY_PATH=/srv/homelab-production/repository
+readonly REPOSITORY_ID=edgefloor/homelab-infra
+readonly EXPECTED_REF=refs/heads/main
+readonly STATE_KEY=homelab-infra/production/tofu.tfstate
+readonly LOCK_PATH=/run/lock/homelab-production-deploy.lock
+
+die() {
+  printf '%s\n' "$2" >&2
+  exit "$1"
+}
+
+[[ $# -eq 0 ]] || die 64 "homelab production deploy: arguments are not accepted"
+
+# Do not inspect content or wait for a writer: stdin must be the Linux null device
+# itself. This rejects terminals, regular files, and pipes whether empty, delayed,
+# newline-prefixed, or populated before any privileged artifact access.
+[[ -c /dev/null && -e /dev/fd/0 && /dev/fd/0 -ef /dev/null ]] || \
+  die 65 "homelab production deploy: stdin must be /dev/null"
+
+# The installed entry point itself is fixed. Calling a checkout copy cannot
+# reach configuration, payload, locks, or credentials.
+[[ "$0" == "$WRAPPER_PATH" ]] || die 77 "homelab production deploy: invoke the installed wrapper"
+[[ "$(id -u)" == 0 ]] || die 77 "homelab production deploy: root execution required"
+
+secure_root_file() {
+  local path=$1 uid mode
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  if uid=$(stat -c '%u' "$path" 2>/dev/null); then
+    mode=$(stat -c '%a' "$path")
+  else
+    uid=$(stat -f '%u' "$path")
+    mode=$(stat -f '%Lp' "$path")
+  fi
+  [[ "$uid" == 0 ]] || return 1
+  (( (8#$mode & 8#022) == 0 ))
+}
+
+secure_root_file "$WRAPPER_PATH" || die 77 "homelab production deploy: wrapper integrity check failed"
+
+# Absence is the normal Phase 0 state. Do not inspect configuration, acquire the
+# lock, or expose any future credential-bearing process until both artifacts pass.
+if [[ ! -e "$CONFIG_PATH" || ! -e "$PAYLOAD_PATH" ]]; then
+  die 78 "homelab production deploy: Phase 1 payload is not configured"
+fi
+secure_root_file "$CONFIG_PATH" || die 77 "homelab production deploy: configuration integrity check failed"
+secure_root_file "$PAYLOAD_PATH" || die 77 "homelab production deploy: payload integrity check failed"
+[[ -x "$PAYLOAD_PATH" ]] || die 77 "homelab production deploy: payload is not executable"
+
+# Phase 1 owns configuration parsing, immutable-commit verification, credential
+# access, locking, redaction, and cleanup. Its interface receives only fixed
+# values in a clean environment; none can be selected by the caller.
+exec /usr/bin/env -i \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  HOME=/root \
+  LANG=C \
+  HOMELAB_REPOSITORY_PATH="$REPOSITORY_PATH" \
+  HOMELAB_REPOSITORY_ID="$REPOSITORY_ID" \
+  HOMELAB_EXPECTED_REF="$EXPECTED_REF" \
+  HOMELAB_STATE_KEY="$STATE_KEY" \
+  HOMELAB_LOCK_PATH="$LOCK_PATH" \
+  HOMELAB_CONFIG_PATH="$CONFIG_PATH" \
+  "$PAYLOAD_PATH"

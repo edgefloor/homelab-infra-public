@@ -1,0 +1,11 @@
+[Unit]
+Description=Create a daily Beszel Hub backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=beszel-backup.service
+
+[Install]
+WantedBy=timers.target

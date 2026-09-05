@@ -1,0 +1,42 @@
+---
+schema_version: 1
+id: tuwunel
+name: Tuwunel
+upstream:
+  repository: https://github.com/matrix-construct/tuwunel
+  release: v1.9.0
+  commit: 5b3669144219d5d4c0774743c84191b476f1b54f
+  distribution: official_package
+runtime: native_systemd
+environments:
+  staging: { target: pangolin, status: migrated_and_validated }
+  production: { target: pangolin, status: active_via_traefik }
+routing: { caddy: none, pangolin: none, traefik: direct_vps, pangolin_auth: none }
+health:
+  local_url: http://127.0.0.1:6167/_matrix/client/versions
+  expected_units: [tuwunel.service, crowdsec-matrix-bridge.service]
+state:
+  paths:
+    - /etc/tuwunel
+    - /var/lib/tuwunel
+    - /etc/crowdsec-matrix-bridge
+    - /var/lib/ip-location-db/user-country
+  backup_required_before_cutover: true
+  ongoing_backup:
+    playbook: ansible/playbooks/tuwunel-backup.yml
+    destination: /var/lib/tuwunel-backups on plan-runner
+    encryption: age
+    retention: 4
+integrations:
+  crowdsec_matrix_bridge:
+    listen: 0.0.0.0:8789
+    public_path: https://matrix.homelab.example/_crowdsec/webhook
+    authentication: bearer_secret
+    matrix_authentication: access_token
+    ip_country_lookup: local_sapics_user-country_daily
+    space: "#homelab:matrix.homelab.example"
+    room_routing:
+      health: [beszel, system]
+      security: [crowdsec]
+      releases: [release]
+      vulnerabilities: [cve]

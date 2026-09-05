@@ -1,0 +1,40 @@
+[Unit]
+Description=Matrix-triggered Codex homelab agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ homelab_agent_user }}
+Group={{ homelab_agent_group }}
+Environment=HOME={{ homelab_agent_state_dir }}
+Environment=CODEX_HOME={{ homelab_agent_codex_home }}
+Environment=HOMELAB_AGENT_MATRIX_URL={{ homelab_agent_matrix_url }}
+Environment=HOMELAB_AGENT_MATRIX_OWNER={{ homelab_agent_matrix_owner }}
+Environment=HOMELAB_AGENT_MATRIX_BOT={{ homelab_agent_matrix_bot }}
+Environment=HOMELAB_AGENT_MODEL={{ homelab_agent_model }}
+Environment=HOMELAB_EVIDENCE_RETENTION_DAYS={{ homelab_agent_evidence_retention_days }}
+Environment=HOMELAB_EVIDENCE_STORAGE_BYTES={{ homelab_agent_evidence_storage_bytes }}
+Environment=HOMELAB_AGENT_REPOSITORY={{ homelab_agent_repository }}
+ExecStart={{ homelab_agent_runtime_dir }}/venv/bin/python {{ homelab_agent_runtime_dir }}/homelab_agent.py
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths={{ homelab_agent_state_dir }}
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictRealtime=yes
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

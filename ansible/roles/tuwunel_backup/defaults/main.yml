@@ -1,0 +1,10 @@
+---
+tuwunel_backup_mode: receiver_prepare
+tuwunel_backup_source_host: 198.51.100.24
+tuwunel_backup_source_user: root
+tuwunel_backup_receiver_dir: /var/lib/tuwunel-backups
+tuwunel_backup_receiver_config_dir: /etc/tuwunel-backup
+tuwunel_backup_keep: 4
+tuwunel_backup_schedule: Sun *-*-* 00:30:00 UTC
+tuwunel_backup_receiver_public_key: ''
+tuwunel_backup_source_host_key: ''

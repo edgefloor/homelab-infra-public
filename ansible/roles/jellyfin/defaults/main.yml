@@ -1,0 +1,18 @@
+---
+jellyfin_version: 10.11.11
+jellyfin_package_version: 10.11.11+deb13
+jellyfin_ffmpeg_version: 7.1.2-3-trixie
+jellyfin_repository_key_sha256: a0cde241ae297fa6f0265c0bf15ce9eb9ee97c008904a59ab367a67d59532839
+jellyfin_nvidia_enabled: true
+jellyfin_nvidia_driver_version: 580.178.04
+jellyfin_nvidia_driver_url: https://download.nvidia.com/XFree86/Linux-x86_64/580.178.04/NVIDIA-Linux-x86_64-580.178.04-no-compat32.run
+jellyfin_nvidia_driver_sha256: 1833c8c5c53481dfab46df442c3de26ec5d4c35084e03d94ad93746d29899750
+jellyfin_hardware_acceleration_type: nvenc
+jellyfin_known_proxies:
+  - 10.42.0.202
+jellyfin_user: jellyfin
+jellyfin_group: jellyfin
+jellyfin_uid: 103
+jellyfin_gid: 112
+jellyfin_port: 8096
+jellyfin_start_service: true

@@ -1,0 +1,19 @@
+---
+# Native OIDC is still an upstream preview. Keep both the PR ref and resolved
+# commit pinned so a rerun cannot silently move the production deployment.
+seerr_version: oidc-pr-2715
+seerr_build_version: 0.1.0
+seerr_repository: https://github.com/seerr-team/seerr.git
+seerr_release: aebd4433738ff01a471642210537bb4e1020d1c2
+seerr_refspec: +refs/pull/2715/head:refs/remotes/origin/pull/2715/head
+seerr_commit: aebd4433738ff01a471642210537bb4e1020d1c2
+seerr_user: seerr
+seerr_group: seerr
+seerr_port: 5055
+seerr_config_directory: /var/lib/seerr/config
+seerr_start_service: true
+
+seerr_node_version: 22.23.2
+seerr_node_url: https://nodejs.org/download/release/v22.23.2/node-v22.23.2-linux-x64.tar.xz
+seerr_node_sha256: d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
+seerr_pnpm_version: 10.24.0

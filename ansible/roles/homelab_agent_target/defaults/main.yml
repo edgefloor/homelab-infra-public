@@ -1,0 +1,9 @@
+---
+homelab_agent_target_user: homelab-agent
+homelab_agent_target_group: homelab-agent
+homelab_agent_public_key: ''
+homelab_agent_units: {}
+homelab_agent_evidence_config_roots: []
+homelab_agent_evidence_max_calls: 160
+homelab_agent_evidence_max_bytes: 8388608
+homelab_agent_evidence_max_seconds: 1800

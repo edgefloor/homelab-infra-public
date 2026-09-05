@@ -1,0 +1,23 @@
+[Unit]
+Description=Pocket ID
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User={{ pocket_id_user }}
+Group={{ pocket_id_group }}
+WorkingDirectory=/opt/pocket-id
+EnvironmentFile=/etc/pocket-id.env
+ExecStart=/opt/pocket-id/pocket-id
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/pocket-id/data
+
+[Install]
+WantedBy=multi-user.target

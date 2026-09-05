@@ -1,0 +1,8 @@
+---
+- name: Configure the Tuwunel Matrix homeserver
+  hosts: tuwunel_servers
+  become: true
+  roles:
+    - common_baseline
+    - tuwunel
+    - matrix_rtc

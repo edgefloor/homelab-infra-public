@@ -1,0 +1,6 @@
+---
+- name: Configure Proxmox host integrations
+  hosts: proxmox_hosts
+  become: true
+  roles:
+    - proxmox_gpu

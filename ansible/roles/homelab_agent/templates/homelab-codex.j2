@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+export CODEX_HOME={{ homelab_agent_codex_home | quote }}
+export HOME={{ homelab_agent_state_dir | quote }}
+
+codex_bin="$({{ homelab_agent_runtime_dir | quote }}/venv/bin/python -c \
+  'from codex_cli_bin import bundled_codex_path; print(bundled_codex_path())')"
+exec "$codex_bin" "$@"

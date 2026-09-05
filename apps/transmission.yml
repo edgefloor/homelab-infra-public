@@ -1,0 +1,33 @@
+---
+schema_version: 1
+id: transmission
+name: Transmission
+upstream:
+  repository: https://github.com/transmission/transmission
+  release: 4.1.3
+  commit: 838877323facc4cc2b677fe817e203779c437bb1
+  distribution: official_package
+runtime: native_systemd
+environments:
+  staging: { target: downloads, status: migrated_and_validated }
+  production: { target: downloads, status: active_via_pangolin }
+routing: { caddy: lan, pangolin: remote }
+authentication:
+  remote_browser: pangolin_only
+  native_rpc_authentication: disabled
+  direct_rpc_scope: trusted_lan_only
+network_policy:
+  peer_discovery: tracker_and_pex
+  dht: disabled
+  lpd: disabled
+  utp: disabled
+  active_downloads: 3
+  active_seeds: 5
+  peers_global: 80
+  peers_per_torrent: 20
+health:
+  local_url: http://127.0.0.1:9091/transmission/web/
+  expected_units: [transmission-daemon.service]
+state:
+  paths: [/etc/transmission-daemon, /var/lib/transmission-daemon/.config/transmission-daemon, /storage/transmission]
+  backup_required_before_cutover: true

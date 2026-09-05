@@ -1,0 +1,35 @@
+---
+- name: Rehearse application recovery in a disconnected disposable LXC
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  vars:
+    defense_restore_archive: /data/backups/dump/vzdump-lxc-205-2026_08_30-12_58_44.tar.zst
+    defense_restore_vmid: 9900
+  tasks:
+    - name: Install the bounded downloads recovery rehearsal
+      ansible.builtin.copy:
+        src: ../../scripts/rehearse_lxc_restore.py
+        dest: /usr/local/libexec/homelab-rehearse-downloads-restore
+        mode: '0755'
+
+    - name: Restore, isolate, test the application, and remove the test guest
+      ansible.builtin.command:
+        argv: [/usr/local/libexec/homelab-rehearse-downloads-restore, --archive, "{{ defense_restore_archive }}", --test-vmid, "{{ defense_restore_vmid }}", --output, /var/lib/homelab-update-monitor/downloads-restore-rehearsal.json]
+      async: 1800
+      poll: 0
+      register: defense_restore_job
+
+    - name: Await the restore rehearsal
+      ansible.builtin.async_status:
+        jid: "{{ defense_restore_job.ansible_job_id }}"
+      register: defense_restore_result
+      until: defense_restore_result.finished
+      retries: 360
+      delay: 5
+
+    - name: Collect the restore receipt
+      ansible.builtin.fetch:
+        src: /var/lib/homelab-update-monitor/downloads-restore-rehearsal.json
+        dest: /tmp/homelab-cve-coverage/downloads-restore-rehearsal.json
+        flat: true

@@ -1,0 +1,329 @@
+---
+- name: Require an amd64 update-monitor target
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture in ['x86_64', 'amd64']
+    fail_msg: The pinned Trivy artifact is only valid for amd64 targets.
+
+- name: Validate explicitly managed Go executable paths
+  ansible.builtin.assert:
+    that:
+      - item is match('^/[A-Za-z0-9_./+-]+$')
+      - "'..' not in item.split('/')"
+    fail_msg: Native Go scan targets must be absolute paths without systemd expansion or traversal.
+  loop: "{{ update_monitor_go_binaries }}"
+
+- name: Require the externally supplied update notification secret
+  ansible.builtin.assert:
+    that:
+      - update_monitor_webhook_secret | length >= 32
+    fail_msg: >-
+      Set HOMELAB_UPDATE_WEBHOOK_SECRET from the existing root-only Matrix
+      bridge webhook secret before applying this role.
+  no_log: true
+
+- name: Install update-monitor runtime dependencies
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - file
+      - python3
+      - tar
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create update-monitor directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ update_monitor_credentials_dir }}", mode: '0700' }
+    - { path: "{{ update_monitor_state_dir }}", mode: '0700' }
+    - { path: "{{ update_monitor_cache_dir }}", mode: '0700' }
+    - { path: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}", mode: '0755' }
+    - { path: "/var/cache/homelab-tools/govulncheck-{{ update_monitor_govulncheck_version }}", mode: '0755' }
+
+- name: Store the update notification webhook secret
+  ansible.builtin.copy:
+    content: "{{ update_monitor_webhook_secret }}\n"
+    dest: "{{ update_monitor_credentials_dir }}/webhook-secret"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Download the checksum-pinned Trivy release
+  ansible.builtin.get_url:
+    url: "{{ update_monitor_trivy_archive_url }}"
+    dest: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}.tar.gz"
+    checksum: "sha256:{{ update_monitor_trivy_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned Trivy release
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}.tar.gz"
+    dest: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}"
+    remote_src: true
+    creates: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}/trivy"
+
+- name: Install the pinned Trivy binary
+  ansible.builtin.copy:
+    src: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}/trivy"
+    dest: /usr/local/bin/trivy
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Check the cached govulncheck release
+  ansible.builtin.stat:
+    path: >-
+      /var/cache/homelab-tools/govulncheck-{{ update_monitor_govulncheck_version }}/govulncheck
+  register: update_monitor_govulncheck_cached
+
+- name: Create temporary Go build directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - "/var/cache/homelab-tools/go-{{ update_monitor_go_version }}"
+    - /var/cache/homelab-tools/go-build
+    - /var/cache/homelab-tools/go-mod
+  when: not update_monitor_govulncheck_cached.stat.exists
+
+- name: Download the checksum-pinned Go toolchain
+  ansible.builtin.get_url:
+    url: "{{ update_monitor_go_archive_url }}"
+    dest: "/var/cache/homelab-tools/go-{{ update_monitor_go_version }}.tar.gz"
+    checksum: "sha256:{{ update_monitor_go_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: not update_monitor_govulncheck_cached.stat.exists
+
+- name: Extract the pinned Go toolchain
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/go-{{ update_monitor_go_version }}.tar.gz"
+    dest: "/var/cache/homelab-tools/go-{{ update_monitor_go_version }}"
+    remote_src: true
+    creates: "/var/cache/homelab-tools/go-{{ update_monitor_go_version }}/go/bin/go"
+  when: not update_monitor_govulncheck_cached.stat.exists
+
+- name: Build the pinned govulncheck release
+  ansible.builtin.command:
+    argv:
+      - "/var/cache/homelab-tools/go-{{ update_monitor_go_version }}/go/bin/go"
+      - install
+      - "golang.org/x/vuln/cmd/govulncheck@v{{ update_monitor_govulncheck_version }}"
+    creates: >-
+      /var/cache/homelab-tools/govulncheck-{{ update_monitor_govulncheck_version }}/govulncheck
+  environment:
+    GOBIN: "/var/cache/homelab-tools/govulncheck-{{ update_monitor_govulncheck_version }}"
+    GOCACHE: /var/cache/homelab-tools/go-build
+    GOMODCACHE: /var/cache/homelab-tools/go-mod
+    GOTELEMETRY: 'off'
+  when: not update_monitor_govulncheck_cached.stat.exists
+
+- name: Remove temporary Go build material
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/var/cache/homelab-tools/go-{{ update_monitor_go_version }}.tar.gz"
+    - "/var/cache/homelab-tools/go-{{ update_monitor_go_version }}"
+    - /var/cache/homelab-tools/go-build
+    - /var/cache/homelab-tools/go-mod
+
+- name: Install the pinned govulncheck binary
+  ansible.builtin.copy:
+    src: >-
+      /var/cache/homelab-tools/govulncheck-{{ update_monitor_govulncheck_version }}/govulncheck
+    dest: /usr/local/bin/govulncheck
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the CVE monitor
+  ansible.builtin.copy:
+    src: homelab_cve_monitor.py
+    dest: /usr/local/libexec/homelab-cve-monitor
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install deployment discovery support
+  ansible.builtin.copy:
+    src: homelab_deployment_inventory.py
+    dest: /usr/local/libexec/homelab_deployment_inventory.py
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the bounded defensive action runner
+  ansible.builtin.copy:
+    src: homelab_defense.py
+    dest: /usr/local/libexec/homelab-defense
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the bounded coverage reader
+  ansible.builtin.copy:
+    src: homelab_coverage_read.py
+    dest: /usr/local/libexec/homelab-coverage-read
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install read-only native candidate verification
+  ansible.builtin.copy:
+    src: homelab_verify_candidate.py
+    dest: /usr/local/libexec/homelab-verify-candidate
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Allow the controller agent to read its own coverage
+  ansible.builtin.copy:
+    content: "homelab-agent ALL=(root) NOPASSWD: /usr/local/libexec/homelab-coverage-read\n"
+    dest: /etc/sudoers.d/homelab-local-coverage
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+  when: inventory_hostname == 'plan-runner'
+
+- name: Publish the expected fleet denominator to the controller
+  ansible.builtin.copy:
+    content: "{{ (lookup('file', update_monitor_config_dir + '/plan-runner.json') | from_json).expected_systems | to_json }}\n"
+    dest: /etc/homelab-agent/coverage-systems.json
+    owner: root
+    group: homelab-agent
+    mode: '0640'
+  when: inventory_hostname == 'plan-runner'
+
+- name: Initialize an empty disabled action policy without replacing operator policy
+  ansible.builtin.copy:
+    src: defense-policy.json
+    dest: /etc/homelab-update-monitor/defense-policy.json
+    owner: root
+    group: root
+    mode: '0600'
+    force: false
+
+- name: Install independent action recovery units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop: [homelab-defense-recovery.service, homelab-defense-recovery.timer]
+  register: update_monitor_recovery_units
+
+- name: Install per-host coverage requirements
+  ansible.builtin.copy:
+    src: "{{ update_monitor_config_dir }}/{{ inventory_hostname }}.json"
+    dest: "{{ update_monitor_credentials_dir }}/deployments.json"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Install the CVE monitor service
+  ansible.builtin.template:
+    src: homelab-cve-monitor.service.j2
+    dest: /etc/systemd/system/homelab-cve-monitor.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: update_monitor_cve_service
+
+- name: Install the CVE monitor timer
+  ansible.builtin.template:
+    src: homelab-cve-monitor.timer.j2
+    dest: /etc/systemd/system/homelab-cve-monitor.timer
+    owner: root
+    group: root
+    mode: '0644'
+  register: update_monitor_cve_timer
+
+- name: Install the RSS release monitor
+  ansible.builtin.copy:
+    src: homelab_release_monitor.py
+    dest: /usr/local/libexec/homelab-release-monitor
+    owner: root
+    group: root
+    mode: '0755'
+  when: update_monitor_release_notifier_enabled
+
+- name: Install the managed release feed list
+  ansible.builtin.copy:
+    src: release-feeds.json
+    dest: /etc/homelab-update-monitor/release-feeds.json
+    owner: root
+    group: root
+    mode: '0644'
+  when: update_monitor_release_notifier_enabled
+
+- name: Install the RSS release monitor units
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item | regex_replace('\\.j2$', '') }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - homelab-release-monitor.service.j2
+    - homelab-release-monitor.timer.j2
+  register: update_monitor_release_units
+  when: update_monitor_release_notifier_enabled
+
+- name: Reload systemd for update monitoring
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: >-
+    update_monitor_cve_service.changed or
+    update_monitor_cve_timer.changed or
+    update_monitor_recovery_units.changed or
+    (update_monitor_release_units.changed | default(false))
+
+- name: Enable the CVE monitor timer
+  ansible.builtin.systemd_service:
+    name: homelab-cve-monitor.timer
+    enabled: true
+    state: started
+
+- name: Enable independent defensive action recovery
+  ansible.builtin.systemd_service:
+    name: homelab-defense-recovery.timer
+    enabled: true
+    state: started
+
+- name: Enable the RSS release monitor timer
+  ansible.builtin.systemd_service:
+    name: homelab-release-monitor.timer
+    enabled: true
+    state: started
+  when: update_monitor_release_notifier_enabled
+
+- name: Verify the installed Trivy version
+  ansible.builtin.command: /usr/local/bin/trivy --version
+  register: update_monitor_trivy_version_output
+  changed_when: false
+  failed_when: >-
+    ('Version: ' + update_monitor_trivy_version) not in
+    update_monitor_trivy_version_output.stdout
+
+- name: Verify the installed govulncheck version
+  ansible.builtin.command: /usr/local/bin/govulncheck -version
+  register: update_monitor_govulncheck_version_output
+  changed_when: false
+  failed_when: >-
+    ('govulncheck@v' + update_monitor_govulncheck_version) not in
+    update_monitor_govulncheck_version_output.stdout

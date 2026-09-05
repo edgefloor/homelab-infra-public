@@ -1,0 +1,116 @@
+deployment {
+  production = environment 'Current production' {
+    description 'Active topology managed by this repository'
+
+    vps = location 'Example Hosting VPS · 198.51.100.24' {
+      description 'Public failure domain · Debian 13 · 2 vCPU · 3.9 GiB RAM'
+
+      docker = compose 'Docker Compose' {
+        gerbil = instanceOf homelab.remote.gerbil
+        traefik = instanceOf homelab.remote.traefik
+        pangolin = instanceOf homelab.remote.pangolin
+        crowdsec = instanceOf homelab.remote.vps_crowdsec
+        beszel = instanceOf homelab.remote.beszel
+        beszel_agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · VPS'
+      }
+
+      matrix = serviceGroup 'Matrix services' {
+        tuwunel = instanceOf homelab.services.communication_apps.tuwunel
+        matrix_bridge = instanceOf homelab.services.communication_apps.matrix_bridge
+        update_monitor = instanceOf homelab.operations.update_monitor
+        matrix_rtc = instanceOf homelab.services.communication_apps.matrix_rtc
+      }
+    }
+
+    home = location 'Home · 10.42.0.0/24' {
+      description 'Private failure domain behind the current ASUS gateway'
+
+      router = appliance 'ASUS router · 10.42.0.1' {
+        instanceOf homelab.home_edge.asus
+        instanceOf homelab.services.infrastructure_apps.router_ui
+      }
+
+      node1 = hypervisor 'node1 · Proxmox VE · 10.42.0.99' {
+        technology 'Proxmox VE 9.2.11 · ZFS'
+        instanceOf homelab.services.infrastructure_apps.proxmox
+        host_agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · node1'
+
+        edge = serviceGroup 'Edge, network & identity' {
+          description 'Visual grouping; every child remains an independent LXC'
+
+          lxc202 = lxc 'LXC 202 · Home edge · .202' {
+            instanceOf homelab.home_edge.caddy
+            instanceOf homelab.home_edge.home_crowdsec
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · Caddy'
+          }
+
+          lxc207 = lxc 'LXC 207 · Pocket ID · .207' {
+            instanceOf homelab.identity.pocketid
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · Pocket ID'
+          }
+
+          lxc210 = lxc 'LXC 210 · Pangolin connector · .210' {
+            instanceOf homelab.home_edge.newt
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · Newt'
+          }
+
+          lxc211 = lxc 'LXC 211 · Network operations · .211' {
+            instanceOf homelab.home_edge.coredns
+            instanceOf homelab.home_edge.ddns
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · network operations'
+          }
+        }
+
+        applications = serviceGroup 'Applications' {
+          description 'Visual grouping; every child remains an independent LXC'
+
+          lxc203 = lxc 'LXC 203 · Jellyfin · .203' {
+            instanceOf homelab.services.media_apps.jellyfin
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · Jellyfin'
+          }
+
+          lxc204 = lxc 'LXC 204 · Media automation · .204' {
+            instanceOf homelab.services.media_apps.shelfmark
+            instanceOf homelab.services.media_apps.seerr
+            instanceOf homelab.services.media_apps.radarr
+            instanceOf homelab.services.media_apps.sonarr
+            instanceOf homelab.services.media_apps.prowlarr
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · media automation'
+          }
+
+          lxc205 = lxc 'LXC 205 · Downloads · .205' {
+            instanceOf homelab.services.download_apps.transmission
+            instanceOf homelab.services.infrastructure_apps.filebrowser
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · downloads'
+          }
+
+          lxc206 = lxc 'LXC 206 · Miniflux · .206' {
+            instanceOf homelab.services.information_apps.miniflux
+            instanceOf homelab.services.information_apps.miniflux_db
+            instanceOf homelab.services.information_apps.miniflux_mcp
+            instanceOf homelab.services.information_apps.openai_tunnel
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · Miniflux'
+          }
+
+          lxc213 = lxc 'LXC 213 · NeroCD · .213' {
+            instanceOf homelab.services.infrastructure_apps.nerocd
+            agent = instanceOf homelab.operations.beszel_agents 'Beszel agent · NeroCD'
+          }
+        }
+
+        operations = serviceGroup 'Operations & communication' {
+          description 'Visual grouping; every child remains an independent LXC'
+
+          lxc200 = lxc 'LXC 200 · Plan runner · .200' {
+            instanceOf homelab.operations.plan_runner
+          }
+
+        }
+      }
+    }
+
+    vps.docker -[tunnel]-> home.node1.edge 'Newt site tunnel'
+    home.node1.edge -[request]-> home.node1.applications 'routes application traffic'
+    home.node1.applications -[telemetry]-> home.node1.operations 'health and alert signals'
+  }
+}

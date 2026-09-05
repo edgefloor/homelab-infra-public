@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+services=(
+  tuwunel.service
+  crowdsec-matrix-bridge.service
+  homelab-release-monitor.timer
+  homelab-cve-monitor.timer
+)
+
+restore_services() {
+  systemctl start "${services[@]}" >/dev/null
+}
+
+trap restore_services EXIT HUP INT TERM
+systemctl stop "${services[@]}"
+
+tar --zstd -C / -cf - \
+  etc/tuwunel \
+  etc/crowdsec-matrix-bridge \
+  etc/matrix-rtc \
+  etc/homelab-update-monitor \
+  opt/matrix-rtc \
+  var/lib/tuwunel \
+  var/lib/homelab-update-monitor

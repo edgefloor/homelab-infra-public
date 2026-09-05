@@ -1,0 +1,40 @@
+---
+schema_version: 1
+id: matrix-rtc
+name: MatrixRTC
+upstream:
+  repository: https://github.com/livekit/livekit
+  release: v1.13.5
+  commit: 3b9f118327b257301083a7c4aa46076c8012918a
+  distribution: official_container_and_packages
+runtime: docker_compose
+environments:
+  staging: { target: pangolin, status: deployed_and_validated }
+  production: { target: pangolin, status: active }
+routing:
+  caddy: none
+  pangolin: none
+  signaling: traefik_direct_vps
+  media: direct_vps_ports
+  pangolin_auth: none
+health:
+  local_url: http://127.0.0.1:8081/healthz
+  expected_units: [docker.service]
+  expected_containers: [matrix-rtc-livekit, matrix-rtc-jwt]
+state:
+  paths:
+    - /etc/matrix-rtc
+    - /opt/matrix-rtc
+  persistent_application_data: none
+  backup_required_before_cutover: false
+network:
+  tcp: [7881, 5349]
+  udp: [3478, 7882, '50300-50400']
+clients:
+  discovery: tuwunel_livekit_url
+  manual_configuration: false
+components:
+  authorization_service:
+    repository: https://github.com/element-hq/lk-jwt-service
+    release: v0.4.4
+    commit: e5c8fca7b06127838d1a62a31abcb7b232afb861

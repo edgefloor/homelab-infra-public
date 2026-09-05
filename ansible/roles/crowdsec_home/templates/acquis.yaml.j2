@@ -1,0 +1,10 @@
+filenames:
+  - {{ caddy_access_log_path }}
+labels:
+  type: caddy
+---
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=ssh.service"
+labels:
+  type: syslog

@@ -1,0 +1,250 @@
+---
+- name: Install signed Debian packages
+  ansible.builtin.apt:
+    name:
+      - ansible-core
+      - ca-certificates
+      - curl
+      - git
+      - gzip
+      - jq
+      - openssh-client
+      - pre-commit
+      - python3
+      - python3-yaml
+      - shellcheck
+      - tar
+      - unzip
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the artifact cache
+  ansible.builtin.file:
+    path: /var/cache/homelab-tools
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download the pinned OpenTofu package
+  ansible.builtin.get_url:
+    url: "{{ opentofu_url }}"
+    dest: "/var/cache/homelab-tools/tofu_{{ opentofu_version }}_amd64.deb"
+    checksum: "sha256:{{ opentofu_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install OpenTofu
+  ansible.builtin.apt:
+    deb: "/var/cache/homelab-tools/tofu_{{ opentofu_version }}_amd64.deb"
+    state: present
+
+- name: Download the pinned SOPS package
+  ansible.builtin.get_url:
+    url: "{{ sops_url }}"
+    dest: "/var/cache/homelab-tools/sops_{{ sops_version }}_amd64.deb"
+    checksum: "sha256:{{ sops_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install SOPS
+  ansible.builtin.apt:
+    deb: "/var/cache/homelab-tools/sops_{{ sops_version }}_amd64.deb"
+    state: present
+
+- name: Download pinned tar archives
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "/var/cache/homelab-tools/{{ item.name }}-{{ item.version }}.tar.gz"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - { name: age, version: "{{ age_version }}", url: "{{ age_url }}", sha256: "{{ age_sha256 }}" }
+    - { name: trufflehog, version: "{{ trufflehog_version }}", url: "{{ trufflehog_url }}", sha256: "{{ trufflehog_sha256 }}" }
+    - { name: actions-runner, version: "{{ github_runner_version }}", url: "{{ github_runner_url }}", sha256: "{{ github_runner_sha256 }}" }
+
+- name: Create versioned tool directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - "/opt/age-{{ age_version }}"
+    - "/opt/trufflehog-{{ trufflehog_version }}"
+
+- name: Create the versioned Actions runner directory
+  ansible.builtin.file:
+    path: "/opt/actions-runner-{{ github_runner_version }}"
+    state: directory
+    owner: "{{ github_runner_user }}"
+    group: "{{ github_runner_user }}"
+    mode: '0755'
+
+- name: Extract age
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/age-{{ age_version }}.tar.gz"
+    dest: "/opt/age-{{ age_version }}"
+    remote_src: true
+    creates: "/opt/age-{{ age_version }}/age/age"
+
+- name: Extract TruffleHog
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/trufflehog-{{ trufflehog_version }}.tar.gz"
+    dest: "/opt/trufflehog-{{ trufflehog_version }}"
+    remote_src: true
+    creates: "/opt/trufflehog-{{ trufflehog_version }}/trufflehog"
+
+- name: Extract the GitHub Actions runner
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/actions-runner-{{ github_runner_version }}.tar.gz"
+    dest: "/opt/actions-runner-{{ github_runner_version }}"
+    remote_src: true
+    owner: "{{ github_runner_user }}"
+    group: "{{ github_runner_user }}"
+    creates: "/opt/actions-runner-{{ github_runner_version }}/bin/Runner.Listener"
+
+- name: Give the runner account ownership of its versioned directory
+  ansible.builtin.file:
+    path: "/opt/actions-runner-{{ github_runner_version }}"
+    state: directory
+    owner: "{{ github_runner_user }}"
+    group: "{{ github_runner_user }}"
+    mode: '0755'
+    recurse: true
+
+- name: Link command-line tools
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    owner: root
+    group: root
+    force: true
+  loop:
+    - { src: "/opt/age-{{ age_version }}/age/age", dest: /usr/local/bin/age }
+    - { src: "/opt/age-{{ age_version }}/age/age-keygen", dest: /usr/local/bin/age-keygen }
+    - { src: "/opt/trufflehog-{{ trufflehog_version }}/trufflehog", dest: /usr/local/bin/trufflehog }
+
+- name: Link the current Actions runner directory
+  ansible.builtin.file:
+    src: "/opt/actions-runner-{{ github_runner_version }}"
+    dest: /opt/actions-runner
+    state: link
+    owner: "{{ github_runner_user }}"
+    group: "{{ github_runner_user }}"
+    force: true
+
+- name: Install Actions runner system dependencies
+  ansible.builtin.command: /opt/actions-runner/bin/installdependencies.sh
+  register: runner_dependencies
+  changed_when: false
+
+- name: Ensure the runner can write its configuration and diagnostics
+  ansible.builtin.file:
+    path: "/opt/actions-runner-{{ github_runner_version }}"
+    state: directory
+    owner: "{{ github_runner_user }}"
+    group: "{{ github_runner_user }}"
+    mode: '0755'
+    recurse: true
+
+- name: Check whether the runner is configured
+  ansible.builtin.stat:
+    path: /opt/actions-runner/.runner
+  register: runner_configuration
+
+- name: Configure the repository runner
+  become_user: "{{ github_runner_user }}"
+  ansible.builtin.command:
+    argv:
+      - /opt/actions-runner/config.sh
+      - --unattended
+      - --url
+      - "{{ github_repository_url }}"
+      - --token
+      - "{{ github_runner_registration_token }}"
+      - --name
+      - "{{ github_runner_name }}"
+      - --work
+      - _work
+      - --labels
+      - "{{ github_runner_labels | join(',') }}"
+      - --no-default-labels
+  environment:
+    HOME: "/home/{{ github_runner_user }}"
+  args:
+    chdir: /opt/actions-runner
+  no_log: true
+  when:
+    - not runner_configuration.stat.exists
+    - github_runner_registration_token | length > 0
+
+- name: Recheck runner configuration
+  ansible.builtin.stat:
+    path: /opt/actions-runner/.runner
+  register: runner_configuration_after
+
+- name: Find an installed Actions runner service
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: actions.runner.*.service
+    file_type: file
+  register: runner_service_units
+
+- name: Install the Actions runner service
+  ansible.builtin.command: /opt/actions-runner/svc.sh install "{{ github_runner_user }}"
+  args:
+    chdir: /opt/actions-runner
+  when:
+    - runner_configuration_after.stat.exists
+    - runner_service_units.matched == 0
+
+- name: Find the Actions runner service after installation
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: actions.runner.*.service
+    file_type: file
+  register: runner_service_units_after
+
+- name: Enable and start the Actions runner service
+  ansible.builtin.systemd_service:
+    name: "{{ runner_service_units_after.files[0].path | basename }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: runner_service_units_after.matched == 1
+
+- name: Create the durable OpenTofu state directory
+  ansible.builtin.file:
+    path: /var/lib/homelab-tofu/proxmox
+    state: directory
+    owner: "{{ github_runner_user }}"
+    group: "{{ github_runner_user }}"
+    mode: '0700'
+
+- name: Install the Proxmox provider environment
+  ansible.builtin.template:
+    src: proxmox.env.j2
+    dest: /etc/homelab-tofu-proxmox.env
+    owner: root
+    group: "{{ github_runner_user }}"
+    mode: '0640'
+  no_log: true
+  when:
+    - proxmox_api_token_id | length > 0
+    - proxmox_api_token_secret | length > 0
+
+- name: Install the OpenTofu credential wrapper
+  ansible.builtin.copy:
+    src: homelab-tofu
+    dest: /usr/local/bin/homelab-tofu
+    owner: root
+    group: "{{ github_runner_user }}"
+    mode: '0750'

@@ -1,0 +1,7 @@
+CVE-2099-1000 | example / service-1 — routine update
+
+The affected handler is disabled in the running service configuration.
+
+Keep running; update during normal maintenance once a fix is verified.
+
+Evidence: 0123456789abcdef

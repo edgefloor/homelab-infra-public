@@ -1,0 +1,3 @@
+---
+proxmox_gpu_nvtop_package: nvtop
+proxmox_gpu_device_init_service: nvidia-device-init.service

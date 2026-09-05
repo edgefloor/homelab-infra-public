@@ -1,0 +1,7 @@
+---
+- name: Configure the Jellyfin target
+  hosts: jellyfin_servers
+  become: true
+  roles:
+    - common_baseline
+    - jellyfin

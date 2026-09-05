@@ -1,0 +1,48 @@
+---
+# Current, non-secret Proxmox topology. This is a working inventory, not an
+# audit record. Refresh it before changing or migrating a guest.
+inventory:
+  schema_version: 2
+  status: current_platform_snapshot
+  observed_at: '2026-09-05T16:31:03+02:00'
+  source_platform: node1
+  collection:
+    method: read_only_proxmox_api
+    script: scripts/phase0_proxmox_inventory.py
+    in_guest_metadata_observed_at: '2026-08-30T15:47:00+02:00'
+    in_guest_metadata_scope: OS, services, listeners, storage paths, file modes, and selected non-secret routing metadata
+    application_data_contents_inspected: false
+    secret_bearing_file_contents_inspected: false
+    secrets_recorded: false
+
+  workloads:
+    - { kind: lxc, id: 112, name: next-plaid, status: running, cores: 4, memory_mib: 8192, disk_gib: 32, address_mode: dhcp, observed_address: 10.42.0.7, bind_mounts: 1 }
+    - { kind: lxc, id: 113, name: firecrawl, status: running, cores: 4, memory_mib: 12288, disk_gib: 64, address_mode: dhcp, observed_address: 10.42.0.108 }
+    - { kind: lxc, id: 115, name: eu-law-db, status: running, cores: 4, memory_mib: 8192, disk_gib: 16, address: 10.42.0.115/24, bind_mounts: 1 }
+    - { kind: lxc, id: 200, name: plan-runner, status: running, cores: 2, memory_mib: 2048, disk_gib: 20, address_mode: static, observed_address: 10.42.0.200/24 }
+    - { kind: lxc, id: 202, name: caddy, status: running, protection: true, cores: 1, memory_mib: 1024, disk_gib: 8, address_mode: static, observed_address: 10.42.0.202/24 }
+    - { kind: lxc, id: 203, name: jellyfin, status: running, protection: true, application: jellyfin, application_version: 10.11.11, accelerator: nvidia_quadro_p2200_nvenc_nvdec, bind_mounts: 1, cores: 4, memory_mib: 8192, disk_gib: 32, address_mode: static, observed_address: 10.42.0.203/24 }
+    - { kind: lxc, id: 204, name: media-automation, status: running, protection: true, applications: [seerr, radarr, sonarr, prowlarr, shelfmark], bind_mounts: 1, cores: 4, memory_mib: 8192, disk_gib: 32, address_mode: static, observed_address: 10.42.0.204/24 }
+    - { kind: lxc, id: 205, name: downloads, status: running, protection: true, applications: [transmission, filebrowser], bind_mounts: 1, cores: 2, memory_mib: 2048, disk_gib: 16, address_mode: static, observed_address: 10.42.0.205/24 }
+    - { kind: lxc, id: 206, name: miniflux, status: running, protection: true, applications: [miniflux, miniflux-mcp, openai-tunnel-client, postgresql], cores: 2, memory_mib: 2048, disk_gib: 16, address_mode: static, observed_address: 10.42.0.206/24 }
+    - { kind: lxc, id: 207, name: pocket-id, status: running, protection: true, application: pocket-id, application_version: 2.14.0, cores: 2, memory_mib: 2048, disk_gib: 8, address_mode: static, observed_address: 10.42.0.207/24 }
+    - { kind: lxc, id: 210, name: pangolin-connector, status: running, protection: true, application: newt, application_version: 1.16.0, cores: 1, memory_mib: 512, disk_gib: 8, address_mode: static, observed_address: 10.42.0.210/24 }
+    - { kind: lxc, id: 211, name: network-ops, status: running, protection: true, applications: [coredns, cloudflare-ddns], cores: 1, memory_mib: 512, disk_gib: 8, address_mode: static, observed_address: 10.42.0.211/24 }
+    - { kind: lxc, id: 213, name: nerocd, status: running, protection: true, application: nerocd, application_version: 0.3.23, cores: 2, memory_mib: 2048, disk_gib: 12, address_mode: static, observed_address: 10.42.0.213/24 }
+
+  current_notes:
+    - LXC 202 is the active Caddy HTTPS edge for direct-home and internal routes.
+    - Seerr, Radarr, Sonarr, Prowlarr, and Shelfmark are active on LXC 204.
+    - Jellyfin 10.11.11 is active on protected LXC 203 with Quadro P2200 hardware transcoding.
+    - Radarr 6.3.0.10514, Sonarr 4.0.19.2979, Prowlarr 2.5.2.5491, Shelfmark 1.3.15, and the pinned Seerr OIDC build are active on protected LXC 204.
+    - Transmission 4.1.3 and File Browser 2.63.23 are active on protected LXC 205.
+    - Miniflux 2.3.3, its MCP server, PostgreSQL 17.11, and the OpenAI tunnel client are active on protected LXC 206.
+    - Pocket ID 2.14.0 is active on protected LXC 207 through Caddy and trusts only Caddy for forwarded client addresses.
+    - Tuwunel 1.9.0 and MatrixRTC are active on the Pangolin VPS with the existing Matrix state and bridge credentials.
+    - Newt 1.16.0 is active on protected LXC 210 and the Pangolin Home site reconnects automatically after reboot.
+    - CoreDNS and the Cloudflare DDNS timer are active on protected LXC 211.
+    - Prowlarr full-syncs nCore and The Pirate Bay to Radarr and Sonarr.
+    - NeroCD 0.3.23 runs its digest-pinned official production Compose profile on protected LXC 213; CoreDNS and Caddy expose it to LAN clients only, with no Cloudflare or Pangolin route.
+    - NextPlaid 112, Firecrawl 113, and EU Law 115 remain active outside the OpenTofu-managed set.
+    - Weekly snapshot backups cover managed LXCs 200, 202-207, 210-211, and 213; the initial managed set and later post-deployment archives passed integrity checks.
+    - OpenTofu owns protected LXCs 200, 202-207, 210-211, and 213; the current live plan is converged.

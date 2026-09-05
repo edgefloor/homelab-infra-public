@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll managed upstream release feeds
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=30m
+RandomizedDelaySec=5m
+Persistent=true
+Unit=homelab-release-monitor.service
+
+[Install]
+WantedBy=timers.target

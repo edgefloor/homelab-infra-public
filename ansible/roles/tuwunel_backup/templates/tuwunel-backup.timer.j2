@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly encrypted Tuwunel backup
+
+[Timer]
+OnCalendar={{ tuwunel_backup_schedule }}
+Persistent=true
+RandomizedDelaySec=10m
+Unit=tuwunel-backup.service
+
+[Install]
+WantedBy=timers.target

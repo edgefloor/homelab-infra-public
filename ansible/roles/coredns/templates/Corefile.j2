@@ -1,0 +1,17 @@
+.:53 {
+    bind {{ coredns_listen_addresses | join(' ') }}
+    errors
+    health 127.0.0.1:8080
+    ready 127.0.0.1:8181
+    hosts /etc/coredns/internal.hosts {
+        ttl 60
+        reload 5s
+        fallthrough
+    }
+    forward . {{ coredns_upstreams | join(' ') }} {
+        policy random
+        health_check 5s
+    }
+    cache 60
+    reload 10s
+}

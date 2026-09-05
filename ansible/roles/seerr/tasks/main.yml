@@ -1,0 +1,228 @@
+---
+- name: Install Seerr build prerequisites
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - git
+      - python3
+      - xz-utils
+    state: present
+
+- name: Create the Seerr group
+  ansible.builtin.group:
+    name: "{{ seerr_group }}"
+    system: true
+
+- name: Create the Seerr service account
+  ansible.builtin.user:
+    name: "{{ seerr_user }}"
+    group: "{{ seerr_group }}"
+    home: /var/lib/seerr
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: true
+
+- name: Create Seerr directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /opt/seerr, owner: root, group: root, mode: '0755' }
+    - { path: /opt/seerr/releases, owner: root, group: root, mode: '0755' }
+    - { path: "/opt/seerr/releases/{{ seerr_commit }}", owner: "{{ seerr_user }}", group: "{{ seerr_group }}", mode: '0755' }
+    - { path: /var/cache/homelab-tools, owner: root, group: root, mode: '0755' }
+    - { path: /var/lib/seerr, owner: "{{ seerr_user }}", group: "{{ seerr_group }}", mode: '0750' }
+    - { path: /var/lib/seerr/.ansible, owner: "{{ seerr_user }}", group: "{{ seerr_group }}", mode: '0700' }
+    - { path: /var/lib/seerr/.ansible/tmp, owner: "{{ seerr_user }}", group: "{{ seerr_group }}", mode: '0700' }
+    - { path: "{{ seerr_config_directory }}", owner: "{{ seerr_user }}", group: "{{ seerr_group }}", mode: '0750' }
+    - { path: /etc/seerr, owner: root, group: "{{ seerr_group }}", mode: '0750' }
+
+- name: Download the pinned official Node.js runtime
+  ansible.builtin.get_url:
+    url: "{{ seerr_node_url }}"
+    dest: "/var/cache/homelab-tools/node-v{{ seerr_node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:{{ seerr_node_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned Node.js runtime
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/node-v{{ seerr_node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/node-v{{ seerr_node_version }}-linux-x64/bin/node"
+
+- name: Link Node.js command-line tools
+  ansible.builtin.file:
+    src: "/opt/node-v{{ seerr_node_version }}-linux-x64/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+    owner: root
+    group: root
+    force: true
+  loop:
+    - node
+    - npm
+    - npx
+    - corepack
+
+- name: Enable the pinned pnpm command through Corepack
+  ansible.builtin.command:
+    argv:
+      - "/opt/node-v{{ seerr_node_version }}-linux-x64/bin/corepack"
+      - enable
+      - --install-directory
+      - /usr/local/bin
+      - pnpm
+  args:
+    creates: /usr/local/bin/pnpm
+
+- name: Check out the pinned Seerr source
+  become_user: "{{ seerr_user }}"
+  ansible.builtin.git:
+    repo: "{{ seerr_repository }}"
+    dest: "/opt/seerr/releases/{{ seerr_commit }}"
+    version: "{{ seerr_release }}"
+    refspec: "{{ seerr_refspec }}"
+    depth: 1
+    single_branch: false
+  environment:
+    HOME: /var/lib/seerr
+
+- name: Read the checked-out Seerr commit
+  become_user: "{{ seerr_user }}"
+  ansible.builtin.command:
+    argv:
+      - git
+      - rev-parse
+      - HEAD
+  args:
+    chdir: "/opt/seerr/releases/{{ seerr_commit }}"
+  environment:
+    HOME: /var/lib/seerr
+  register: seerr_checked_out_commit
+  changed_when: false
+  failed_when: seerr_checked_out_commit.stdout != seerr_commit
+
+- name: Read the pinned pnpm version
+  become_user: "{{ seerr_user }}"
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/pnpm
+      - --version
+  args:
+    chdir: "/opt/seerr/releases/{{ seerr_commit }}"
+  environment:
+    COREPACK_HOME: /var/lib/seerr/.cache/corepack
+    HOME: /var/lib/seerr
+    PATH: "/opt/node-v{{ seerr_node_version }}-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
+  register: seerr_pnpm_version_output
+  changed_when: false
+  failed_when: seerr_pnpm_version_output.stdout != seerr_pnpm_version
+
+- name: Install pinned Seerr dependencies
+  become_user: "{{ seerr_user }}"
+  ansible.builtin.command:
+    argv:
+      - "/opt/node-v{{ seerr_node_version }}-linux-x64/bin/corepack"
+      - pnpm
+      - install
+      - --frozen-lockfile
+  args:
+    chdir: "/opt/seerr/releases/{{ seerr_commit }}"
+    creates: "/opt/seerr/releases/{{ seerr_commit }}/node_modules/.modules.yaml"
+  environment:
+    COREPACK_HOME: /var/lib/seerr/.cache/corepack
+    CYPRESS_INSTALL_BINARY: '0'
+    HOME: /var/lib/seerr
+    PATH: "/opt/node-v{{ seerr_node_version }}-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
+
+- name: Build the pinned Seerr release
+  become_user: "{{ seerr_user }}"
+  ansible.builtin.command:
+    argv:
+      - "/opt/node-v{{ seerr_node_version }}-linux-x64/bin/corepack"
+      - pnpm
+      - build
+  args:
+    chdir: "/opt/seerr/releases/{{ seerr_commit }}"
+    creates: "/opt/seerr/releases/{{ seerr_commit }}/dist/index.js"
+  environment:
+    COREPACK_HOME: /var/lib/seerr/.cache/corepack
+    HOME: /var/lib/seerr
+    PATH: "/opt/node-v{{ seerr_node_version }}-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
+
+- name: Link the current Seerr release
+  ansible.builtin.file:
+    src: "/opt/seerr/releases/{{ seerr_commit }}"
+    dest: /opt/seerr/current
+    state: link
+    owner: root
+    group: root
+    follow: false
+    force: true
+  notify: Restart Seerr
+
+- name: Install the non-secret Seerr environment
+  ansible.builtin.template:
+    src: seerr.conf.j2
+    dest: /etc/seerr/seerr.conf
+    owner: root
+    group: "{{ seerr_group }}"
+    mode: '0640'
+  notify: Restart Seerr
+
+- name: Install the Seerr systemd service
+  ansible.builtin.template:
+    src: seerr.service.j2
+    dest: /etc/systemd/system/seerr.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Seerr
+
+- name: Apply the requested Seerr service state
+  ansible.builtin.systemd_service:
+    name: seerr.service
+    enabled: "{{ seerr_start_service }}"
+    state: "{{ 'started' if seerr_start_service else 'stopped' }}"
+    daemon_reload: true
+
+- name: Read the built Seerr version
+  ansible.builtin.command:
+    argv:
+      - "/opt/node-v{{ seerr_node_version }}-linux-x64/bin/node"
+      - -p
+      - require('./package.json').version
+  args:
+    chdir: /opt/seerr/current
+  register: seerr_built_version
+  changed_when: false
+  failed_when: seerr_built_version.stdout != seerr_build_version
+
+- name: Read the pinned Node.js version
+  ansible.builtin.command:
+    argv:
+      - "/opt/node-v{{ seerr_node_version }}-linux-x64/bin/node"
+      - --version
+  register: seerr_node_version_output
+  changed_when: false
+  failed_when: seerr_node_version_output.stdout != 'v' + seerr_node_version
+
+- name: Apply pending Seerr service changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Check the Seerr status endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ seerr_port }}/api/v1/status"
+    return_content: true
+    status_code: 200
+  register: seerr_health
+  retries: 30
+  delay: 2
+  until: seerr_health.status == 200
+  when: seerr_start_service

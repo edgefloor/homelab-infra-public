@@ -1,0 +1,43 @@
+---
+schema_version: 1
+id: beszel
+name: Beszel Hub
+upstream:
+  repository: https://github.com/henrygd/beszel
+  release: 0.19.0
+  commit: ffcdb041670a501611727848649d28d886beb231
+  distribution: official_package
+runtime: docker_compose
+environments:
+  staging: { target: remote-platform, status: deployed_and_validated }
+  production: { target: remote-platform, status: active_via_pangolin }
+routing: { caddy: none, pangolin: remote }
+health:
+  local_url: http://127.0.0.1:8090/
+  expected_units: [docker.service, beszel-backup.timer]
+state:
+  paths: [/opt/beszel/data, /var/backups/beszel]
+  backup_required_before_cutover: true
+authentication:
+  oidc: pocket_id
+  remote_browser: pangolin_sso_then_native_oidc
+  pangolin_sso: enabled
+  pangolin_auto_redirect_idp: pocket_id
+  trusted_auth_header: disabled
+  password_auth: false
+  automatic_oidc_redirect: true
+  oauth_user_creation: disabled
+  account_linking: existing_admin_by_oidc_subject
+agents:
+  transport: outbound_websocket
+  endpoint: /api/beszel/agent-connect
+  pangolin_browser_sso: bypass_for_exact_endpoint
+  enrolled_systems: 12
+  enrollment_open: false
+notifications:
+  matrix_sender: "@monitor:matrix.homelab.example"
+  matrix_space: "#homelab:matrix.homelab.example"
+  matrix_room: "#homelab-health:matrix.homelab.example"
+  matrix_room_encrypted: false
+  credential_storage: beszel_database_only
+  baseline_alerts: { type: status, delay_minutes: 5, systems: 11 }

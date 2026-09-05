@@ -1,0 +1,521 @@
+---
+- name: Install the Pangolin container runtime and firewall
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+      - gpg
+      - nftables
+      - openssl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable and start Docker
+  ansible.builtin.systemd_service:
+    name: docker.service
+    enabled: true
+    state: started
+
+- name: Create Pangolin directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ pangolin_install_dir }}", mode: '0750' }
+    - { path: "{{ pangolin_install_dir }}/config", mode: '0750' }
+    - { path: "{{ pangolin_install_dir }}/config/db", mode: '0750' }
+    - { path: "{{ pangolin_install_dir }}/config/letsencrypt", mode: '0700' }
+    - { path: "{{ pangolin_install_dir }}/config/traefik", mode: '0750' }
+    - { path: "{{ pangolin_install_dir }}/config/traefik/logs", mode: '0750' }
+    - { path: "{{ pangolin_install_dir }}/config/crowdsec", mode: '0700' }
+    - { path: "{{ pangolin_install_dir }}/config/crowdsec/data", mode: '0700' }
+
+- name: Check for the Pangolin server secret
+  ansible.builtin.stat:
+    path: /etc/pangolin-server-secret
+  register: pangolin_secret_file
+
+- name: Generate the Pangolin server secret
+  ansible.builtin.command:
+    cmd: openssl rand -hex 32
+  register: pangolin_generated_secret
+  when: not pangolin_secret_file.stat.exists
+  no_log: true
+
+- name: Store the Pangolin server secret outside the deployment directory
+  ansible.builtin.copy:
+    content: "{{ pangolin_generated_secret.stdout }}\n"
+    dest: /etc/pangolin-server-secret
+    owner: root
+    group: root
+    mode: '0600'
+  when: not pangolin_secret_file.stat.exists
+  no_log: true
+
+- name: Read the Pangolin server secret
+  ansible.builtin.slurp:
+    src: /etc/pangolin-server-secret
+  register: pangolin_secret_content
+  no_log: true
+
+- name: Prepare the Pangolin server secret for configuration
+  ansible.builtin.set_fact:
+    pangolin_server_secret: "{{ pangolin_secret_content.content | b64decode | trim }}"
+  no_log: true
+
+- name: Install the Pangolin Compose definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ pangolin_install_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: pangolin_compose
+
+- name: Install the Pangolin application configuration
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ pangolin_install_dir }}/config/config.yml"
+    owner: root
+    group: root
+    mode: '0600'
+  register: pangolin_config
+  no_log: true
+
+- name: Install the Traefik static configuration
+  ansible.builtin.template:
+    src: traefik_config.yml.j2
+    dest: "{{ pangolin_install_dir }}/config/traefik/traefik_config.yml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: pangolin_traefik_config
+
+- name: Install the Traefik dynamic configuration
+  ansible.builtin.template:
+    src: dynamic_config.yml.j2
+    dest: "{{ pangolin_install_dir }}/config/traefik/dynamic_config.yml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: pangolin_dynamic_config
+
+- name: Install Traefik access-log rotation
+  ansible.builtin.template:
+    src: traefik-access-logrotate.j2
+    dest: /etc/logrotate.d/pangolin-traefik-access
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Check for the Traefik access log
+  ansible.builtin.stat:
+    path: "{{ pangolin_install_dir }}/config/traefik/logs/access.log"
+  register: pangolin_traefik_access_log
+
+- name: Ensure the Traefik access log exists before CrowdSec starts
+  ansible.builtin.file:
+    path: "{{ pangolin_install_dir }}/config/traefik/logs/access.log"
+    state: touch
+    owner: root
+    group: root
+    mode: '0640'
+    access_time: preserve
+    modification_time: preserve
+  when: not pangolin_traefik_access_log.stat.exists
+
+- name: Install the VPS nftables policy
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: '0644'
+    validate: /usr/sbin/nft -c -f %s
+  notify: Restart nftables
+
+- name: Apply firewall changes before publishing containers
+  ansible.builtin.meta: flush_handlers
+
+- name: Pull the pinned Pangolin images
+  ansible.builtin.command:
+    cmd: docker compose pull --quiet
+    chdir: "{{ pangolin_install_dir }}"
+  changed_when: false
+
+- name: Start the independent VPS CrowdSec engine
+  ansible.builtin.command:
+    cmd: docker compose up -d crowdsec
+    chdir: "{{ pangolin_install_dir }}"
+  register: crowdsec_engine_up
+  changed_when: >-
+    'Created' in crowdsec_engine_up.stderr or
+    'Recreated' in crowdsec_engine_up.stderr or
+    'Started' in crowdsec_engine_up.stderr
+
+- name: Wait for the VPS CrowdSec local API
+  ansible.builtin.command:
+    cmd: docker exec crowdsec cscli lapi status
+  register: crowdsec_lapi_health
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: crowdsec_lapi_health.rc == 0
+
+- name: Create CrowdSec managed configuration directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+  loop:
+    - "{{ pangolin_install_dir }}/config/crowdsec/acquis.d"
+    - "{{ pangolin_install_dir }}/config/crowdsec/notifications"
+    - "{{ pangolin_install_dir }}/config/crowdsec/parsers/s02-enrich"
+    - "{{ pangolin_install_dir }}/config/crowdsec/postoverflows/s01-whitelist"
+
+- name: Install the VPS CrowdSec acquisition configuration
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ pangolin_install_dir }}/config/crowdsec/acquis.d/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0640'
+  loop:
+    - { src: crowdsec-traefik-acquis.yaml.j2, dest: traefik.yaml }
+    - { src: crowdsec-journal-acquis.yaml.j2, dest: ssh-journal.yaml }
+  register: crowdsec_acquisitions
+
+- name: Disable the image placeholder acquisition
+  ansible.builtin.template:
+    src: crowdsec-acquis.yaml.j2
+    dest: "{{ pangolin_install_dir }}/config/crowdsec/acquis.yaml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: crowdsec_placeholder_acquisition
+
+- name: Install the VPS trusted-infrastructure whitelist
+  ansible.builtin.template:
+    src: crowdsec-whitelist.yaml.j2
+    dest: "{{ pangolin_install_dir }}/config/crowdsec/parsers/s02-enrich/example-vps-whitelist.yaml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: crowdsec_whitelist
+
+- name: Verify trusted dynamic hostnames resolve from the VPS engine
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - crowdsec
+      - getent
+      - hosts
+      - "{{ item }}"
+  loop: "{{ crowdsec_trusted_dynamic_hosts }}"
+  changed_when: false
+
+- name: Install the VPS dynamic home whitelist
+  ansible.builtin.template:
+    src: crowdsec-dynamic-whitelist.yaml.j2
+    dest: "{{ pangolin_install_dir }}/config/crowdsec/postoverflows/s01-whitelist/example-vps-home-ddns.yaml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: crowdsec_dynamic_whitelist
+
+- name: Install escalating VPS decision durations
+  ansible.builtin.template:
+    src: crowdsec-profiles.yaml.local.j2
+    dest: "{{ pangolin_install_dir }}/config/crowdsec/profiles.yaml.local"
+    owner: root
+    group: root
+    mode: '0640'
+  register: crowdsec_profiles
+
+- name: Inspect the VPS CrowdSec Matrix webhook secret
+  ansible.builtin.stat:
+    path: "{{ crowdsec_matrix_webhook_secret_file }}"
+  register: crowdsec_matrix_webhook_secret_stat
+
+- name: Require the root-only VPS CrowdSec Matrix webhook secret
+  ansible.builtin.assert:
+    that:
+      - crowdsec_matrix_webhook_secret_stat.stat.exists
+      - crowdsec_matrix_webhook_secret_stat.stat.isreg
+      - crowdsec_matrix_webhook_secret_stat.stat.pw_name == 'root'
+      - crowdsec_matrix_webhook_secret_stat.stat.mode == '0600'
+    fail_msg: >-
+      Provision {{ crowdsec_matrix_webhook_secret_file }} as a root-owned mode
+      0600 file before applying the Pangolin role.
+
+- name: Read the VPS CrowdSec Matrix webhook secret
+  ansible.builtin.slurp:
+    src: "{{ crowdsec_matrix_webhook_secret_file }}"
+  register: crowdsec_matrix_webhook_secret_content
+  no_log: true
+
+- name: Prepare the VPS CrowdSec Matrix webhook secret
+  ansible.builtin.set_fact:
+    crowdsec_matrix_webhook_secret: >-
+      {{ crowdsec_matrix_webhook_secret_content.content | b64decode | trim }}
+  no_log: true
+
+- name: Configure filtered VPS CrowdSec Matrix notifications
+  ansible.builtin.template:
+    src: crowdsec-matrix-http.yaml.j2
+    dest: "{{ pangolin_install_dir }}/config/crowdsec/notifications/matrix.yaml"
+    owner: root
+    group: root
+    mode: '0600'
+  register: crowdsec_matrix_notification
+  no_log: true
+
+- name: Validate the VPS CrowdSec configuration
+  ansible.builtin.command:
+    cmd: docker exec crowdsec crowdsec -t
+  changed_when: false
+
+- name: Restart CrowdSec for managed configuration changes
+  ansible.builtin.command:
+    cmd: docker compose restart crowdsec
+    chdir: "{{ pangolin_install_dir }}"
+  when: >-
+    crowdsec_acquisitions.changed or
+    crowdsec_placeholder_acquisition.changed or
+    crowdsec_whitelist.changed or
+    crowdsec_dynamic_whitelist.changed or
+    crowdsec_profiles.changed or
+    crowdsec_matrix_notification.changed
+  changed_when: true
+
+- name: Wait for CrowdSec after managed configuration changes
+  ansible.builtin.command:
+    cmd: docker exec crowdsec cscli lapi status
+  register: crowdsec_configured_health
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: crowdsec_configured_health.rc == 0
+
+- name: Check for the Traefik CrowdSec bouncer key
+  ansible.builtin.stat:
+    path: /etc/pangolin-crowdsec-traefik-key
+  register: crowdsec_traefik_key_file
+
+- name: Generate the Traefik CrowdSec bouncer key
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - crowdsec
+      - cscli
+      - bouncers
+      - add
+      - pangolin-traefik
+      - -o
+      - raw
+  register: crowdsec_traefik_key_generated
+  when: not crowdsec_traefik_key_file.stat.exists
+  no_log: true
+
+- name: Store the Traefik CrowdSec bouncer key
+  ansible.builtin.copy:
+    content: "{{ crowdsec_traefik_key_generated.stdout | trim }}\n"
+    dest: /etc/pangolin-crowdsec-traefik-key
+    owner: root
+    group: root
+    mode: '0600'
+  when: not crowdsec_traefik_key_file.stat.exists
+  no_log: true
+
+- name: Check for the VPS firewall CrowdSec bouncer key
+  ansible.builtin.stat:
+    path: /etc/pangolin-crowdsec-firewall-key
+  register: crowdsec_firewall_key_file
+
+- name: Generate the VPS firewall CrowdSec bouncer key
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - crowdsec
+      - cscli
+      - bouncers
+      - add
+      - pangolin-firewall
+      - -o
+      - raw
+  register: crowdsec_firewall_key_generated
+  when: not crowdsec_firewall_key_file.stat.exists
+  no_log: true
+
+- name: Store the VPS firewall CrowdSec bouncer key
+  ansible.builtin.copy:
+    content: "{{ crowdsec_firewall_key_generated.stdout | trim }}\n"
+    dest: /etc/pangolin-crowdsec-firewall-key
+    owner: root
+    group: root
+    mode: '0600'
+  when: not crowdsec_firewall_key_file.stat.exists
+  no_log: true
+
+- name: Read the VPS firewall CrowdSec bouncer key
+  ansible.builtin.slurp:
+    src: /etc/pangolin-crowdsec-firewall-key
+  register: crowdsec_firewall_key_content
+  no_log: true
+
+- name: Prepare the VPS firewall CrowdSec bouncer key
+  ansible.builtin.set_fact:
+    crowdsec_firewall_bouncer_key: >-
+      {{ crowdsec_firewall_key_content.content | b64decode | trim }}
+  no_log: true
+
+- name: Download the CrowdSec repository key
+  ansible.builtin.get_url:
+    url: https://packagecloud.io/crowdsec/crowdsec/gpgkey
+    dest: /usr/share/keyrings/crowdsec-packagecloud.asc
+    checksum: "sha256:{{ crowdsec_repository_key_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure the CrowdSec package repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/usr/share/keyrings/crowdsec-packagecloud.asc]
+      https://packagecloud.io/crowdsec/crowdsec/debian/
+      {{ crowdsec_repository_distribution }} main
+    filename: crowdsec
+    state: present
+  register: crowdsec_repository
+
+- name: Pin the VPS CrowdSec firewall bouncer version
+  ansible.builtin.copy:
+    content: |
+      Package: crowdsec-firewall-bouncer-nftables
+      Pin: version {{ crowdsec_firewall_bouncer_version }}
+      Pin-Priority: 1001
+    dest: /etc/apt/preferences.d/crowdsec-firewall-bouncer
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the pinned VPS CrowdSec nftables bouncer
+  ansible.builtin.apt:
+    name: >-
+      crowdsec-firewall-bouncer-nftables={{ crowdsec_firewall_bouncer_version }}
+    state: present
+    update_cache: "{{ crowdsec_repository.changed }}"
+    allow_downgrade: true
+
+- name: Configure the VPS CrowdSec nftables bouncer
+  ansible.builtin.template:
+    src: crowdsec-firewall-bouncer.yaml.j2
+    dest: /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  register: crowdsec_firewall_bouncer_config
+  no_log: true
+
+- name: Enable and start the VPS CrowdSec nftables bouncer
+  ansible.builtin.systemd_service:
+    name: crowdsec-firewall-bouncer.service
+    enabled: true
+    state: >-
+      {{ 'restarted' if crowdsec_firewall_bouncer_config.changed else 'started' }}
+
+- name: Enroll the VPS engine in CrowdSec Console
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - crowdsec
+      - cscli
+      - console
+      - enroll
+      - --name
+      - "{{ crowdsec_console_engine_name }}"
+      - "{{ crowdsec_console_enrollment_key }}"
+  when: crowdsec_console_enrollment_key | length > 0
+  no_log: true
+
+- name: Start the Pangolin stack
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: "{{ pangolin_install_dir }}"
+  register: pangolin_compose_up
+  changed_when: >-
+    'Created' in pangolin_compose_up.stderr or
+    'Recreated' in pangolin_compose_up.stderr or
+    'Started' in pangolin_compose_up.stderr
+
+- name: Restart Traefik after static or dynamic configuration changes
+  ansible.builtin.command:
+    cmd: docker compose restart traefik
+    chdir: "{{ pangolin_install_dir }}"
+  when: pangolin_traefik_config.changed or pangolin_dynamic_config.changed
+  changed_when: true
+
+- name: Restart Pangolin after application configuration changes
+  ansible.builtin.command:
+    cmd: docker compose restart pangolin
+    chdir: "{{ pangolin_install_dir }}"
+  when: pangolin_config.changed
+  changed_when: true
+
+- name: Wait for the Pangolin API health endpoint
+  ansible.builtin.command:
+    cmd: docker exec pangolin curl -fsS http://127.0.0.1:3001/api/v1/
+  register: pangolin_health
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: pangolin_health.rc == 0
+
+- name: Wait for the public Pangolin dashboard
+  ansible.builtin.uri:
+    url: "https://{{ pangolin_dashboard_domain }}/auth/initial-setup"
+    status_code: 200
+    validate_certs: true
+  register: pangolin_public_health
+  retries: 30
+  delay: 5
+  until: pangolin_public_health.status == 200
+
+- name: Verify all Pangolin containers are running
+  ansible.builtin.command:
+    cmd: docker compose ps --status running --services
+    chdir: "{{ pangolin_install_dir }}"
+  register: pangolin_running_services
+  changed_when: false
+  failed_when: >-
+    pangolin_running_services.stdout_lines | sort !=
+    ['crowdsec', 'gerbil', 'pangolin', 'traefik'] | sort
+
+- name: Verify both VPS CrowdSec bouncers are registered
+  ansible.builtin.command:
+    cmd: docker exec crowdsec cscli bouncers list -o json
+  register: crowdsec_vps_bouncers
+  changed_when: false
+  failed_when: >-
+    'pangolin-traefik' not in (crowdsec_vps_bouncers.stdout | lower) or
+    'pangolin-firewall' not in (crowdsec_vps_bouncers.stdout | lower)
+
+- name: Protect generated Pangolin state
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop:
+    - "{{ pangolin_install_dir }}/config/db/db.sqlite"
+    - "{{ pangolin_install_dir }}/config/key"

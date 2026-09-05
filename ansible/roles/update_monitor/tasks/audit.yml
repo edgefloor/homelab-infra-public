@@ -1,0 +1,53 @@
+---
+- name: Assemble the isolated scan command
+  ansible.builtin.set_fact:
+    update_monitor_audit_argv:
+      - /usr/local/libexec/homelab-cve-monitor
+      - --trivy
+      - /usr/local/bin/trivy
+      - --state
+      - "{{ update_monitor_state_dir }}/coverage-audit.json"
+      - --cache
+      - "{{ update_monitor_cache_dir }}/trivy"
+      - --snapshot-only
+      - --deployment-config
+      - "{{ update_monitor_credentials_dir }}/deployments.json"
+
+- name: Include every declared native Go executable
+  ansible.builtin.set_fact:
+    update_monitor_audit_argv: "{{ update_monitor_audit_argv + ['--go-binary', item] }}"
+  loop: "{{ update_monitor_go_binaries }}"
+
+- name: Start the read-only artifact scan
+  ansible.builtin.command:
+    argv: "{{ update_monitor_audit_argv }}"
+  async: 1800
+  poll: 0
+  register: update_monitor_audit_job
+  changed_when: false
+
+- name: Await the artifact scan
+  ansible.builtin.async_status:
+    jid: "{{ update_monitor_audit_job.ansible_job_id }}"
+  register: update_monitor_audit_result
+  until: update_monitor_audit_result.finished
+  retries: 360
+  delay: 5
+  failed_when: false
+  changed_when: false
+
+- name: Collect findings, inventories, and completion status
+  ansible.builtin.fetch:
+    src: "{{ update_monitor_state_dir }}/coverage-audit{{ item.remote }}.json"
+    dest: "{{ cve_audit_output_dir }}/{{ inventory_hostname }}{{ item.local }}.json"
+    flat: true
+  loop:
+    - { remote: '', local: '' }
+    - { remote: '.status', local: '.status' }
+  failed_when: false
+
+- name: Require a completed scan for this host
+  ansible.builtin.assert:
+    that:
+      - update_monitor_audit_result.rc | default(1) == 0
+    fail_msg: Coverage is unknown on this host; retain its failed status in the audit report.

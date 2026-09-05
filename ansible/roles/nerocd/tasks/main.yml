@@ -1,0 +1,442 @@
+---
+- name: Install the NeroCD container runtime
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+      - git
+      - openssl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable and start Docker
+  ansible.builtin.systemd_service:
+    name: docker.service
+    enabled: true
+    state: started
+
+- name: Create the NeroCD directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ nerocd_install_dir }}", mode: '0700' }
+    - { path: "{{ nerocd_runtime_dir }}", mode: '0700' }
+    - { path: "{{ nerocd_secrets_dir }}", mode: '0700' }
+
+- name: Check whether NeroCD already has a verified backup baseline
+  ansible.builtin.stat:
+    path: "{{ nerocd_install_dir }}/.initial-backup-complete"
+  register: nerocd_backup_baseline
+
+- name: Check out the pinned NeroCD release
+  ansible.builtin.git:
+    repo: "{{ nerocd_repository }}"
+    dest: "{{ nerocd_source_dir }}"
+    version: "{{ nerocd_version }}"
+    depth: 1
+    single_branch: true
+    update: true
+    force: true
+  register: nerocd_source
+
+- name: Verify the pinned NeroCD commit
+  ansible.builtin.command:
+    argv: [git, -C, "{{ nerocd_source_dir }}", rev-parse, HEAD]
+  register: nerocd_checked_out_commit
+  changed_when: false
+  failed_when: nerocd_checked_out_commit.stdout | trim != nerocd_commit
+
+- name: Create an application-aware backup before a NeroCD release change
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f compose.production.yaml -f compose.homelab.yml
+      exec -T backup-scheduler nerocd backup --output-dir /backups
+    chdir: "{{ nerocd_runtime_dir }}"
+  when:
+    - nerocd_source.changed
+    - nerocd_backup_baseline.stat.exists
+  register: nerocd_pre_upgrade_backup
+
+- name: Verify the NeroCD pre-upgrade backup
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f compose.production.yaml -f compose.homelab.yml
+      exec -T backup-scheduler /bin/sh -ec
+      'latest="";
+      for candidate in /backups/backup-*; do
+        [ -d "$candidate" ] && latest="$candidate";
+      done;
+      [ -n "$latest" ];
+      exec nerocd backup-verify --input-dir "$latest"'
+    chdir: "{{ nerocd_runtime_dir }}"
+  when: nerocd_pre_upgrade_backup.changed | default(false)
+  register: nerocd_pre_upgrade_backup_verification
+  changed_when: false
+  failed_when: >-
+    nerocd_pre_upgrade_backup_verification.rc != 0 or
+    'backup verified' not in nerocd_pre_upgrade_backup_verification.stdout
+
+- name: Install the pinned upstream production Compose file
+  ansible.builtin.copy:
+    src: "{{ nerocd_source_dir }}/compose.production.yaml"
+    dest: "{{ nerocd_runtime_dir }}/compose.production.yaml"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0640'
+  register: nerocd_production_compose
+
+- name: Generate the NeroCD owner database password
+  ansible.builtin.command: openssl rand -hex 32
+  args:
+    creates: "{{ nerocd_secrets_dir }}/owner-password"
+  register: nerocd_owner_password_generated
+  no_log: true
+
+- name: Store the NeroCD owner database password
+  ansible.builtin.copy:
+    content: "{{ nerocd_owner_password_generated.stdout }}\n"
+    dest: "{{ nerocd_secrets_dir }}/owner-password"
+    owner: root
+    group: root
+    mode: '0400'
+  when: nerocd_owner_password_generated.changed
+  no_log: true
+
+- name: Generate the NeroCD application database password
+  ansible.builtin.command: openssl rand -hex 32
+  args:
+    creates: "{{ nerocd_secrets_dir }}/app-password"
+  register: nerocd_app_password_generated
+  no_log: true
+
+- name: Store the NeroCD application database password
+  ansible.builtin.copy:
+    content: "{{ nerocd_app_password_generated.stdout }}\n"
+    dest: "{{ nerocd_secrets_dir }}/app-password"
+    owner: root
+    group: root
+    mode: '0400'
+  when: nerocd_app_password_generated.changed
+  no_log: true
+
+- name: Generate the NeroCD bootstrap password
+  ansible.builtin.command: openssl rand -base64 24
+  args:
+    creates: "{{ nerocd_secrets_dir }}/bootstrap-admin-password"
+  register: nerocd_bootstrap_password_generated
+  no_log: true
+
+- name: Store the NeroCD bootstrap password
+  ansible.builtin.copy:
+    content: "{{ nerocd_bootstrap_password_generated.stdout }}\n"
+    dest: "{{ nerocd_secrets_dir }}/bootstrap-admin-password"
+    owner: root
+    group: root
+    mode: '0400'
+  when: nerocd_bootstrap_password_generated.changed
+  no_log: true
+
+- name: Read the generated NeroCD database passwords
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop:
+    - "{{ nerocd_secrets_dir }}/owner-password"
+    - "{{ nerocd_secrets_dir }}/app-password"
+  register: nerocd_database_password_files
+  no_log: true
+
+- name: Install the owner database URL
+  ansible.builtin.copy:
+    content: >-
+      postgresql://{{ nerocd_owner_database_user }}:{{ nerocd_database_password_files.results[0].content | b64decode | trim }}@postgres:5432/nerocd?sslmode=disable
+    dest: "{{ nerocd_secrets_dir }}/owner-database-url"
+    owner: root
+    group: root
+    mode: '0400'
+  no_log: true
+
+- name: Install the application database URL
+  ansible.builtin.copy:
+    content: >-
+      postgresql://{{ nerocd_app_database_user }}:{{ nerocd_database_password_files.results[1].content | b64decode | trim }}@postgres:5432/nerocd?sslmode=disable
+    dest: "{{ nerocd_secrets_dir }}/app-database-url"
+    owner: root
+    group: root
+    mode: '0400'
+  no_log: true
+
+- name: Install the PostgreSQL bootstrap password
+  ansible.builtin.copy:
+    content: "{{ nerocd_database_password_files.results[0].content | b64decode | trim }}\n"
+    dest: "{{ nerocd_secrets_dir }}/postgres-password"
+    owner: root
+    group: root
+    mode: '0400'
+  no_log: true
+
+- name: Install the NeroCD production environment
+  ansible.builtin.template:
+    src: nerocd.env.j2
+    dest: "{{ nerocd_runtime_dir }}/.env"
+    owner: root
+    group: root
+    mode: '0400'
+  register: nerocd_environment
+
+- name: Install the private NeroCD edge configuration
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ nerocd_runtime_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: '0644'
+  register: nerocd_edge_configuration
+
+- name: Install the homelab Compose override
+  ansible.builtin.template:
+    src: compose.homelab.yml.j2
+    dest: "{{ nerocd_runtime_dir }}/compose.homelab.yml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: nerocd_compose_override
+
+- name: Inspect the NeroCD proxy network
+  ansible.builtin.command: docker network inspect "{{ nerocd_proxy_network }}"
+  register: nerocd_proxy_network_inspection
+  changed_when: false
+  failed_when: false
+
+- name: Create the NeroCD proxy network
+  ansible.builtin.command:
+    argv:
+      - docker
+      - network
+      - create
+      - --driver
+      - bridge
+      - --subnet
+      - "{{ nerocd_proxy_subnet }}"
+      - "{{ nerocd_proxy_network }}"
+  when: nerocd_proxy_network_inspection.rc != 0
+  register: nerocd_proxy_network_created
+
+- name: Verify the NeroCD proxy network
+  ansible.builtin.command: docker network inspect "{{ nerocd_proxy_network }}"
+  register: nerocd_proxy_network_final
+  changed_when: false
+  failed_when: nerocd_proxy_subnet not in nerocd_proxy_network_final.stdout
+
+- name: Validate NeroCD production configuration with the pinned artifact
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --read-only
+      - --user
+      - 0:0
+      - --env
+      - NEROCD_MODE=production
+      - --env
+      - "NEROCD_IMAGE_REF={{ nerocd_image }}"
+      - --env
+      - "NEROCD_PUBLIC_ORIGIN={{ nerocd_public_origin }}"
+      - --env
+      - "NEROCD_TRUSTED_PROXY_CIDRS={{ nerocd_proxy_subnet }}"
+      - --env
+      - "NEROCD_OWNER_DATABASE_USER={{ nerocd_owner_database_user }}"
+      - --env
+      - "NEROCD_APP_DATABASE_USER={{ nerocd_app_database_user }}"
+      - --env
+      - NEROCD_OWNER_DATABASE_URL_FILE=/run/secrets/owner-database-url
+      - --env
+      - NEROCD_APP_DATABASE_URL_FILE=/run/secrets/app-database-url
+      - --volume
+      - "{{ nerocd_secrets_dir }}:/run/secrets:ro"
+      - "{{ nerocd_image }}"
+      - doctor
+  changed_when: false
+  no_log: true
+
+- name: Validate the combined NeroCD Compose model
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f compose.production.yaml -f compose.homelab.yml config --quiet
+    chdir: "{{ nerocd_runtime_dir }}"
+  changed_when: false
+
+- name: Install the NeroCD systemd service
+  ansible.builtin.template:
+    src: nerocd.service.j2
+    dest: /etc/systemd/system/nerocd.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: nerocd_service
+
+- name: Pull the pinned NeroCD stack
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f compose.production.yaml -f compose.homelab.yml pull --quiet
+    chdir: "{{ nerocd_runtime_dir }}"
+  changed_when: false
+
+- name: Enable and reconcile NeroCD
+  ansible.builtin.systemd_service:
+    name: nerocd.service
+    enabled: true
+    daemon_reload: true
+    state: >-
+      {{ 'restarted' if
+         nerocd_source.changed or
+         nerocd_production_compose.changed or
+         nerocd_environment.changed or
+         nerocd_edge_configuration.changed or
+         nerocd_compose_override.changed or
+         nerocd_service.changed or
+         nerocd_proxy_network_created.changed | default(false)
+         else 'started' }}
+
+- name: Wait for NeroCD readiness
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f compose.production.yaml -f compose.homelab.yml
+      exec -T server nerocd ready --addr http://127.0.0.1:8080
+    chdir: "{{ nerocd_runtime_dir }}"
+  register: nerocd_readiness
+  changed_when: false
+  retries: 60
+  delay: 5
+  until: nerocd_readiness.rc == 0
+
+- name: Bootstrap the initial NeroCD administrator once
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    cat {{ nerocd_secrets_dir }}/bootstrap-admin-password |
+    docker compose --env-file .env
+    -f compose.production.yaml -f compose.homelab.yml
+    run --rm -T --no-deps
+    -e NEROCD_PUBLIC_ORIGIN={{ nerocd_public_origin | quote }}
+    -e NEROCD_TRUSTED_PROXY_CIDRS={{ nerocd_proxy_subnet | quote }}
+    migrate
+    bootstrap-admin --email {{ nerocd_bootstrap_email | quote }}
+    --name {{ nerocd_bootstrap_name | quote }} --password-stdin &&
+    touch {{ nerocd_install_dir }}/.bootstrap-complete
+  args:
+    executable: /bin/bash
+    chdir: "{{ nerocd_runtime_dir }}"
+    creates: "{{ nerocd_install_dir }}/.bootstrap-complete"
+  no_log: true
+
+- name: Create the initial application-aware NeroCD backup
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f compose.production.yaml -f compose.homelab.yml
+      --profile tools run --rm -T --no-deps
+      -v nerocd_backup-data:/backups
+      database-tools backup --output-dir /backups
+    chdir: "{{ nerocd_runtime_dir }}"
+    creates: "{{ nerocd_install_dir }}/.initial-backup-complete"
+  register: nerocd_initial_backup
+
+- name: Mark the initial NeroCD backup complete
+  ansible.builtin.file:
+    path: "{{ nerocd_install_dir }}/.initial-backup-complete"
+    state: touch
+    owner: root
+    group: root
+    mode: '0600'
+  when: nerocd_initial_backup.changed
+
+- name: Verify the newest NeroCD application backup
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - --network
+      - none
+      - --read-only
+      - --cap-drop
+      - ALL
+      - --security-opt
+      - no-new-privileges
+      - --volume
+      - nerocd_backup-data:/backups:ro
+      - --entrypoint
+      - /bin/sh
+      - "{{ nerocd_image }}"
+      - -ec
+      - >-
+        latest="";
+        for candidate in /backups/backup-*; do
+          [ -d "$candidate" ] && latest="$candidate";
+        done;
+        [ -n "$latest" ];
+        exec nerocd backup-verify --input-dir "$latest"
+  register: nerocd_backup_verification
+  changed_when: false
+  failed_when: >-
+    nerocd_backup_verification.rc != 0 or
+    'backup verified' not in nerocd_backup_verification.stdout
+
+- name: Read running NeroCD services
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f compose.production.yaml -f compose.homelab.yml
+      ps --status running --services
+    chdir: "{{ nerocd_runtime_dir }}"
+  register: nerocd_running_services
+  changed_when: false
+
+- name: Verify the long-running NeroCD services
+  ansible.builtin.assert:
+    that:
+      - >-
+        nerocd_running_services.stdout_lines | sort ==
+        ['backup-scheduler', 'edge', 'postgres', 'server'] | sort
+    fail_msg: NeroCD did not start every long-running service
+
+- name: Inspect NeroCD host listeners
+  ansible.builtin.command: ss -H -lnt
+  register: nerocd_listeners
+  changed_when: false
+
+- name: Verify only the private edge is LAN-published
+  ansible.builtin.assert:
+    that:
+      - "nerocd_listen_address + ':' + (nerocd_listen_port | string) in nerocd_listeners.stdout"
+      - "'0.0.0.0:5432' not in nerocd_listeners.stdout"
+      - "'0.0.0.0:8080' not in nerocd_listeners.stdout"
+
+- name: Verify direct non-Caddy access is rejected
+  ansible.builtin.uri:
+    url: "http://{{ nerocd_listen_address }}:{{ nerocd_listen_port }}/api/v1/health"
+    status_code: 403
+
+- name: Verify the running NeroCD release
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f compose.production.yaml -f compose.homelab.yml
+      exec -T server nerocd version
+    chdir: "{{ nerocd_runtime_dir }}"
+  register: nerocd_running_version
+  changed_when: false
+  failed_when: nerocd_version | regex_replace('^v', '') not in nerocd_running_version.stdout

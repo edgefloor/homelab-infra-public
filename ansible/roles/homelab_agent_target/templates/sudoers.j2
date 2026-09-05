@@ -1,0 +1,9 @@
+{% for unit in homelab_agent_units.values() | unique | sort %}
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/bin/systemctl restart {{ unit }}
+{% endfor %}
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/local/libexec/homelab-evidence-gateway
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/local/libexec/homelab-defense
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/local/libexec/homelab-coverage-read
+{% if inventory_hostname == 'proxmox' %}
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/local/libexec/homelab-guest-agent
+{% endif %}

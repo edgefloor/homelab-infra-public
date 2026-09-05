@@ -1,0 +1,3 @@
+{% for host in coredns_internal_hosts %}
+{{ host.address }} {{ host.hostname }}
+{% endfor %}

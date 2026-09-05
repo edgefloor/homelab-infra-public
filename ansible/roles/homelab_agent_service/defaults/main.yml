@@ -1,0 +1,18 @@
+---
+homelab_agent_user: homelab-agent
+homelab_agent_group: homelab-agent
+homelab_agent_runtime_dir: /opt/homelab-agent
+homelab_agent_state_dir: /var/lib/homelab-agent
+homelab_agent_codex_home: /var/lib/homelab-agent/.codex
+homelab_agent_ssh_key: /var/lib/homelab-agent/.ssh/id_ed25519
+homelab_agent_repository: /opt/actions-runner/_work/homelab-infra/homelab-infra
+homelab_agent_matrix_url: https://matrix.homelab.example
+homelab_agent_matrix_owner: '@operator:matrix.homelab.example'
+homelab_agent_matrix_bot: '@monitor:matrix.homelab.example'
+homelab_agent_model: gpt-5.6-terra
+homelab_agent_matrix_access_token: ''
+homelab_agent_matrix_room: ''
+homelab_agent_matrix_health_room: ''
+homelab_agent_matrix_vulnerabilities_room: ''
+homelab_agent_evidence_retention_days: 30
+homelab_agent_evidence_storage_bytes: 268435456

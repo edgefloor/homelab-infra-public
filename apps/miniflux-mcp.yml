@@ -1,0 +1,20 @@
+---
+schema_version: 1
+id: miniflux-mcp
+name: Miniflux MCP
+upstream:
+  repository: https://github.com/tssujt/miniflux-mcp
+  release: v0.6.0
+  commit: 435aff918ad8c6e9dd378d88d00b7427e933e5c9
+  distribution: source_build
+runtime: native_systemd
+environments:
+  staging: { target: miniflux, status: migrated_and_validated }
+  production: { target: miniflux, status: active_outbound_integration }
+routing: { caddy: none, pangolin: none }
+health:
+  local_url: http://127.0.0.1:8081/healthz
+  expected_units: [miniflux-mcp.service]
+state:
+  paths: [/etc/miniflux-mcp.env]
+  backup_required_before_cutover: true

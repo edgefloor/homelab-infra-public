@@ -1,0 +1,3 @@
+---
+cloudflare_ddns_environment_file: /etc/cloudflare-ddns.env
+cloudflare_ddns_public_ip_url: https://1.1.1.1/cdn-cgi/trace

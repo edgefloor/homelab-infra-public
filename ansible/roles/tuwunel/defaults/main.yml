@@ -1,0 +1,16 @@
+---
+tuwunel_version: 1.9.0
+tuwunel_package_url: https://github.com/matrix-construct/tuwunel/releases/download/v1.9.0/v1.9.0-release-all-x86_64-v1-linux-gnu-tuwunel.deb
+tuwunel_package_sha256: 1d5d9d326e16b52a3e8b13d6e847fc1b661803a415c189d90b2755bef236c613
+tuwunel_server_name: matrix.homelab.example
+tuwunel_address: 0.0.0.0
+tuwunel_port: 6167
+tuwunel_public_url: https://matrix.homelab.example
+tuwunel_livekit_url: https://matrix-rtc.homelab.example
+tuwunel_proxy_source: rightmost_x_forwarded_for
+tuwunel_max_request_size: 100 MiB
+crowdsec_matrix_bridge_port: 8789
+crowdsec_matrix_bridge_credentials_dir: /etc/crowdsec-matrix-bridge
+crowdsec_ip_country_data_dir: /var/lib/ip-location-db/user-country
+crowdsec_ip_country_update_calendar: '*-*-* 04:17:00'
+crowdsec_ip_country_update_jitter: 1h

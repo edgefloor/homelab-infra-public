@@ -1,0 +1,11 @@
+---
+coredns_version: 1.14.7
+coredns_archive_sha256: 9a09356438c6d9591cb80011a2a7a52f87fc3a113f6690e41f243f98b98faac9
+coredns_archive_url: >-
+  https://github.com/coredns/coredns/releases/download/v{{ coredns_version }}/coredns_{{ coredns_version }}_linux_amd64.tgz
+coredns_listen_addresses:
+  - 127.0.0.1
+  - 10.42.0.211
+coredns_upstreams:
+  - 1.1.1.1
+  - 9.9.9.9

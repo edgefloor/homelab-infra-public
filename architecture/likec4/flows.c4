@@ -1,0 +1,60 @@
+views {
+  dynamic view remote_native_oidc {
+    title 'Remote Proxmox login · Pangolin gate plus native OIDC'
+    description '''
+      Pangolin establishes the outer access session, then preserves `/sso` so
+      Proxmox starts its own OIDC flow. Pocket ID may reuse its browser session,
+      but Proxmox still owns a separate application session.
+    '''
+
+    remote_browser -> cloudflare '1 · resolves proxmox.homelab.example'
+    cloudflare -> homelab.remote.traefik '2 · returns the Pangolin VPS address'
+    remote_browser -> homelab.remote.traefik '3 · opens /sso'
+    homelab.remote.traefik -> homelab.remote.pangolin '4 · applies the resource policy'
+    homelab.remote.pangolin -> homelab.identity.pocketid '5 · authenticates and checks Infrastructure access'
+    homelab.identity.pocketid -> homelab.remote.pangolin '6 · returns the Pangolin identity'
+    homelab.remote.pangolin -> homelab.home_edge.newt '7 · routes the Home site through the outbound tunnel'
+    homelab.home_edge.newt -> homelab.home_edge.caddy '8 · preserves /sso'
+    homelab.home_edge.caddy -> homelab.services.infrastructure_apps.proxmox '9 · submits the Proxmox OIDC start request'
+    homelab.services.infrastructure_apps.proxmox -> homelab.identity.pocketid '10 · starts native OIDC'
+    homelab.identity.pocketid -> homelab.services.infrastructure_apps.proxmox '11 · returns the mapped identity'
+    homelab.services.infrastructure_apps.proxmox -> remote_browser '12 · creates the Proxmox session'
+  }
+
+  dynamic view remote_single_login {
+    title 'Remote Miniflux login · one interactive sign-in'
+    description '''
+      Pangolin authenticates through Pocket ID once. Caddy converts the trusted
+      Pangolin identity into the Miniflux identity header, so Miniflux loads the
+      mapped existing user without presenting a second login page.
+    '''
+
+    remote_browser -> cloudflare '1 · resolves rss.homelab.example'
+    cloudflare -> homelab.remote.traefik '2 · returns the Pangolin VPS address'
+    remote_browser -> homelab.remote.traefik '3 · opens Miniflux'
+    homelab.remote.traefik -> homelab.remote.pangolin '4 · starts the resource policy'
+    homelab.remote.pangolin -> homelab.identity.pocketid '5 · authenticates and checks Media access'
+    homelab.identity.pocketid -> homelab.remote.pangolin '6 · returns the trusted identity'
+    homelab.remote.pangolin -> homelab.home_edge.newt '7 · routes the Home site'
+    homelab.home_edge.newt -> homelab.home_edge.caddy '8 · forwards the authenticated request'
+    homelab.home_edge.caddy -> homelab.services.information_apps.miniflux '9 · sets the trusted remote-user header'
+    homelab.services.information_apps.miniflux -> remote_browser '10 · opens the mapped user session'
+  }
+
+  dynamic view lan_independence {
+    title 'LAN access when the VPS is unavailable'
+    description '''
+      Split DNS deliberately removes the VPS from the LAN path. Native-OIDC
+      applications can still reach Pocket ID at home and create their normal
+      application session.
+    '''
+
+    lan_client -> homelab.home_edge.coredns '1 · resolves the internal hostname'
+    homelab.home_edge.coredns -> lan_client '2 · returns Caddy at 10.42.0.202'
+    lan_client -> homelab.home_edge.caddy '3 · opens the application directly'
+    homelab.home_edge.caddy -> homelab.services.infrastructure_apps.proxmox '4 · proxies on the LAN'
+    homelab.services.infrastructure_apps.proxmox -> homelab.identity.pocketid '5 · starts native OIDC'
+    homelab.identity.pocketid -> homelab.services.infrastructure_apps.proxmox '6 · returns the user identity'
+    homelab.services.infrastructure_apps.proxmox -> lan_client '7 · creates the application session'
+  }
+}

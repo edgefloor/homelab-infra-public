@@ -1,0 +1,19 @@
+CVE-2099-1001 | example / service-8 — urgent remediation
+
+The affected handler is enabled and the configured input satisfies the advisory conditions.
+
+Prioritize containment or remediation now; a patched replacement has not been verified.
+
+CVE-2099-1000 | example / 8 components — routine update
+
+The affected handler is disabled in the running service configuration.
+
+Keep running; update during normal maintenance once a fix is verified.
+
+CVE-2099-1001 | example / 7 components — routine update
+
+The affected handler is disabled in the running service configuration.
+
+Keep running; update during normal maintenance once a fix is verified.
+
+Evidence: 0123456789abcdef

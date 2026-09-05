@@ -1,0 +1,12 @@
+---
+- name: Create private guest scanner staging
+  ansible.builtin.file:
+    path: /var/lib/homelab-update-monitor/guest-staging
+    state: directory
+    mode: '0700'
+
+- name: Install each external guest scanner
+  ansible.builtin.include_tasks: external_guest.yml
+  loop: "{{ update_monitor_external_guests }}"
+  loop_control:
+    loop_var: coverage_guest

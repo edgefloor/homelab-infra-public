@@ -1,0 +1,9 @@
+---
+homelab_agent_user: homelab-agent
+homelab_agent_group: homelab-agent
+homelab_agent_runtime_dir: /opt/homelab-agent
+homelab_agent_state_dir: /var/lib/homelab-agent
+homelab_agent_codex_home: /var/lib/homelab-agent/.codex
+homelab_agent_codex_version: 0.147.0
+homelab_agent_mcp_version: 1.29.1
+homelab_agent_ssh_key: /var/lib/homelab-agent/.ssh/id_ed25519

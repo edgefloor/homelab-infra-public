@@ -1,0 +1,25 @@
+---
+schema_version: 1
+id: miniflux
+name: Miniflux
+upstream:
+  repository: https://github.com/miniflux/v2
+  release: 2.3.3
+  commit: a4ba097af79e451eac6aa42ac144fe47f75cf9f0
+  distribution: official_package
+runtime: native_systemd
+environments:
+  staging: { target: miniflux, status: migrated_and_validated }
+  production: { target: miniflux, status: active_via_pangolin }
+routing: { caddy: lan, pangolin: remote }
+authentication:
+  remote_browser: pangolin_identity_header
+  lan_browser: native_pocket_id_oidc
+  remote_api: miniflux_native_token
+  proxy_identity_creation: mapped_existing_users_only
+health:
+  local_url: http://127.0.0.1:8080/
+  expected_units: [postgresql.service, miniflux.service]
+state:
+  paths: [/etc/miniflux.conf, /var/lib/postgresql/17/main]
+  backup_required_before_cutover: true

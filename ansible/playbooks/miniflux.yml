@@ -1,0 +1,7 @@
+---
+- name: Configure the Miniflux target
+  hosts: miniflux_servers
+  become: true
+  roles:
+    - common_baseline
+    - miniflux

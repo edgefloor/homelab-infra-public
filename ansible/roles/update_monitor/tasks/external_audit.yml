@@ -1,0 +1,35 @@
+---
+- name: Start isolated guest scans
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ item.id }}", --, /usr/local/libexec/homelab-cve-monitor, --trivy, /usr/local/bin/trivy, --state, /var/lib/homelab-update-monitor/coverage-audit.json, --cache, /var/cache/homelab-update-monitor/trivy, --deployment-config, /etc/homelab-update-monitor/deployments.json, --snapshot-only]
+  loop: "{{ update_monitor_external_guests }}"
+  async: 7200
+  poll: 0
+  register: external_scan_jobs
+  changed_when: false
+
+- name: Await each guest scan
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  loop: "{{ external_scan_jobs.results }}"
+  register: external_scan_result
+  until: external_scan_result.finished
+  retries: 1440
+  delay: 5
+  failed_when: false
+  changed_when: false
+
+- name: Pull guest evidence to private Proxmox staging
+  ansible.builtin.command:
+    argv: [pct, pull, "{{ item.0.id }}", "/var/lib/homelab-update-monitor/coverage-audit{{ item.1 }}.json", "/var/lib/homelab-update-monitor/guest-staging/{{ item.0.name }}{{ item.1 }}.json"]
+  loop: "{{ update_monitor_external_guests | product(['', '.status']) | list }}"
+  failed_when: false
+  changed_when: false
+
+- name: Fetch external guest evidence
+  ansible.builtin.fetch:
+    src: "/var/lib/homelab-update-monitor/guest-staging/{{ item.0.name }}{{ item.1 }}.json"
+    dest: "{{ cve_audit_output_dir }}/{{ item.0.name }}{{ item.1 }}.json"
+    flat: true
+  loop: "{{ update_monitor_external_guests | product(['', '.status']) | list }}"
+  failed_when: false

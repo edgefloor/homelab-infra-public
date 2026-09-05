@@ -1,0 +1,56 @@
+---
+# Bounded live scan roots; resolved release paths and installed metadata are recorded.
+schema_version: 1
+systems:
+  proxmox: {libraries: []}
+  caddy: {libraries: []}
+  downloads: {libraries: []}
+  miniflux: {libraries: []}
+  pocket-id: {libraries: []}
+  pangolin-connector: {libraries: []}
+  network-ops: {libraries: []}
+  nerocd: {libraries: []}
+  jellyfin:
+    libraries:
+      - {deployment: jellyfin, path: /usr/lib/jellyfin/bin, types: [dotnet-core]}
+  media-automation:
+    libraries:
+      - {deployment: seerr, path: /opt/seerr/current, types: [node-pkg]}
+      - {deployment: shelfmark, path: /opt/shelfmark, types: [python-pkg, node-pkg]}
+      - {deployment: radarr, path: /opt/radarr/current, types: [dotnet-core]}
+      - {deployment: sonarr, path: /opt/sonarr/current, types: [dotnet-core]}
+      - {deployment: prowlarr, path: /opt/prowlarr/current, types: [dotnet-core]}
+  pangolin:
+    libraries:
+      - {deployment: tuwunel, path: /usr/sbin/tuwunel, types: [rustbinary]}
+  plan-runner:
+    libraries:
+      - {deployment: diagnostic-agent, path: /opt/homelab-agent, types: [python-pkg, rustbinary]}
+      - {deployment: plan-runner, path: /opt/actions-runner, types: [dotnet-core, node-pkg]}
+  next-plaid:
+    libraries:
+      - {deployment: next-plaid, path: /usr/local/bin/next-plaid-api, types: [rustbinary]}
+  firecrawl: {libraries: []}
+  eu-law-db: {libraries: []}
+
+additional_units:
+  next-plaid: [next-plaid.service]
+  firecrawl: [firecrawl.service]
+  eu-law-postgresql: [postgresql@17-main.service, postgresql.service]
+  miniflux-postgresql: [postgresql@*.service, postgresql.service]
+  nerocd-postgresql: []
+  plan-runner: [actions.runner.*.service, tuwunel-backup.service]
+  diagnostic-agent: [homelab-agent.service]
+  beszel-agents: [beszel-agent.service]
+  matrix-alert-bridge: [crowdsec-matrix-bridge.service, ip-country-db-update.service]
+  coredns-ddns: [cloudflare-ddns.service]
+  hypervisor: []
+
+containers:
+  beszel: [beszel]
+  crowdsec: [crowdsec]
+  matrix-rtc: [matrix-rtc-*]
+  pangolin: [pangolin, gerbil, traefik]
+  nerocd: [nerocd-*]
+  nerocd-postgresql: [nerocd-postgres-*]
+  firecrawl: [firecrawl-*]

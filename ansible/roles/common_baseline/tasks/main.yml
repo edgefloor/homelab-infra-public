@@ -1,0 +1,75 @@
+---
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - openssh-server
+      - python3
+      - sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Link the host timezone data
+  ansible.builtin.file:
+    src: "/usr/share/zoneinfo/{{ homelab_timezone }}"
+    dest: /etc/localtime
+    state: link
+    force: true
+
+- name: Record the host timezone
+  ansible.builtin.copy:
+    content: "{{ homelab_timezone }}\n"
+    dest: /etc/timezone
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create the administration account
+  ansible.builtin.user:
+    name: "{{ homelab_admin_user }}"
+    shell: /bin/bash
+    create_home: true
+    groups: sudo
+    append: true
+
+- name: Create the administration SSH directory
+  ansible.builtin.file:
+    path: "/home/{{ homelab_admin_user }}/.ssh"
+    state: directory
+    owner: "{{ homelab_admin_user }}"
+    group: "{{ homelab_admin_user }}"
+    mode: '0700'
+
+- name: Install the administration SSH key
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', homelab_admin_public_key_path) }}\n"
+    dest: "/home/{{ homelab_admin_user }}/.ssh/authorized_keys"
+    owner: "{{ homelab_admin_user }}"
+    group: "{{ homelab_admin_user }}"
+    mode: '0600'
+
+- name: Allow the administration account to use sudo
+  ansible.builtin.copy:
+    content: "{{ homelab_admin_user }} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    dest: "/etc/sudoers.d/{{ homelab_admin_user }}"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+
+# Debian may enable socket activation during an OpenSSH package upgrade while
+# the conventional service is already running. Keep one explicit startup mode
+# so upgrades do not leave a failed ssh.socket unit behind.
+- name: Disable OpenSSH socket activation
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    enabled: false
+    state: stopped
+
+- name: Enable the OpenSSH service
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    enabled: true
+    state: started

@@ -1,0 +1,30 @@
+---
+schema_version: 1
+id: pangolin
+name: Pangolin
+upstream:
+  repository: https://github.com/fosrl/pangolin
+  release: 1.22.2
+  commit: 17375348b0769c26b38aafa4d2a6010b8ad9772d
+  distribution: official_package
+  edition: enterprise
+runtime: docker_compose
+environments:
+  staging: { target: remote-platform, status: deployed_and_validated }
+  production: { target: remote-platform, status: active_with_home_connector }
+routing: { caddy: none, pangolin: none }
+authentication:
+  oidc: pocket_id
+  allowed_groups: [infrastructure, media, downloads, jellyfin]
+  group_role_mapping:
+    infrastructure: Infrastructure
+    media: Media
+    downloads: Downloads
+    jellyfin: Jellyfin
+health:
+  local_url: http://127.0.0.1:3001/api/v1/
+  expected_units: [docker.service, nftables.service, crowdsec-firewall-bouncer.service]
+  expected_containers: [pangolin, gerbil, traefik, crowdsec]
+state:
+  paths: [/opt/pangolin/config, /etc/pangolin-server-secret, /etc/pangolin-crowdsec-traefik-key, /etc/pangolin-crowdsec-firewall-key, /root/pangolin-initial-admin.txt, /root/pangolin-home-newt.env]
+  backup_required_before_cutover: true

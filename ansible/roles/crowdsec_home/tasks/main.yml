@@ -1,0 +1,248 @@
+---
+- name: Install CrowdSec repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - gpg
+      - nftables
+    state: present
+
+- name: Download the CrowdSec repository key
+  ansible.builtin.get_url:
+    url: https://packagecloud.io/crowdsec/crowdsec/gpgkey
+    dest: /usr/share/keyrings/crowdsec-packagecloud.asc
+    checksum: "sha256:{{ crowdsec_repository_key_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure the CrowdSec package repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/usr/share/keyrings/crowdsec-packagecloud.asc]
+      https://packagecloud.io/crowdsec/crowdsec/debian/
+      {{ crowdsec_repository_distribution }} main
+    filename: crowdsec
+    state: present
+  register: crowdsec_repository
+
+- name: Pin the CrowdSec engine and firewall bouncer versions
+  ansible.builtin.copy:
+    content: |
+      Package: crowdsec
+      Pin: version {{ crowdsec_version }}
+      Pin-Priority: 1001
+
+      Package: crowdsec-firewall-bouncer-nftables
+      Pin: version {{ crowdsec_firewall_bouncer_version }}
+      Pin-Priority: 1001
+    dest: /etc/apt/preferences.d/crowdsec
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the pinned CrowdSec engine and nftables bouncer
+  ansible.builtin.apt:
+    name:
+      - "crowdsec={{ crowdsec_version }}"
+      - "crowdsec-firewall-bouncer-nftables={{ crowdsec_firewall_bouncer_version }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    allow_downgrade: true
+
+- name: Check for the home firewall bouncer key
+  ansible.builtin.stat:
+    path: /etc/crowdsec/home-firewall-bouncer.key
+  register: crowdsec_home_firewall_key_file
+
+- name: Stop the firewall bouncer until its managed key is installed
+  ansible.builtin.systemd_service:
+    name: crowdsec-firewall-bouncer.service
+    state: stopped
+  when: not crowdsec_home_firewall_key_file.stat.exists
+
+- name: Generate the home firewall bouncer key
+  ansible.builtin.command:
+    argv:
+      - cscli
+      - bouncers
+      - add
+      - home-firewall
+      - -o
+      - raw
+  register: crowdsec_home_firewall_key_generated
+  when: not crowdsec_home_firewall_key_file.stat.exists
+  no_log: true
+
+- name: Store the home firewall bouncer key
+  ansible.builtin.copy:
+    content: "{{ crowdsec_home_firewall_key_generated.stdout | trim }}\n"
+    dest: /etc/crowdsec/home-firewall-bouncer.key
+    owner: root
+    group: root
+    mode: '0600'
+  when: not crowdsec_home_firewall_key_file.stat.exists
+  no_log: true
+
+- name: Read the home firewall bouncer key
+  ansible.builtin.slurp:
+    src: /etc/crowdsec/home-firewall-bouncer.key
+  register: crowdsec_home_firewall_key_content
+  no_log: true
+
+- name: Prepare the home firewall bouncer key
+  ansible.builtin.set_fact:
+    crowdsec_home_firewall_bouncer_key: >-
+      {{ crowdsec_home_firewall_key_content.content | b64decode | trim }}
+  no_log: true
+
+- name: Configure the home nftables bouncer
+  ansible.builtin.template:
+    src: firewall-bouncer.yaml.j2
+    dest: /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Allow CrowdSec to read Caddy access logs
+  ansible.builtin.user:
+    name: crowdsec
+    groups: caddy
+    append: true
+  notify: Restart CrowdSec
+
+- name: Install the home-edge acquisitions
+  ansible.builtin.template:
+    src: acquis.yaml.j2
+    dest: /etc/crowdsec/acquis.d/home-edge.yaml
+    owner: root
+    group: crowdsec
+    mode: '0640'
+  notify: Restart CrowdSec
+
+- name: Install the trusted-infrastructure whitelist
+  ansible.builtin.template:
+    src: homelab-whitelist.yaml.j2
+    dest: /etc/crowdsec/parsers/s02-enrich/example-homelab-whitelist.yaml
+    owner: root
+    group: crowdsec
+    mode: '0640'
+  notify: Restart CrowdSec
+
+- name: Install escalating decision durations
+  ansible.builtin.template:
+    src: profiles.yaml.local.j2
+    dest: /etc/crowdsec/profiles.yaml.local
+    owner: root
+    group: crowdsec
+    mode: '0640'
+  notify: Restart CrowdSec
+
+- name: Inspect the CrowdSec Matrix webhook secret
+  ansible.builtin.stat:
+    path: "{{ crowdsec_matrix_webhook_secret_file }}"
+  register: crowdsec_matrix_webhook_secret_stat
+
+- name: Require the root-only CrowdSec Matrix webhook secret
+  ansible.builtin.assert:
+    that:
+      - crowdsec_matrix_webhook_secret_stat.stat.exists
+      - crowdsec_matrix_webhook_secret_stat.stat.isreg
+      - crowdsec_matrix_webhook_secret_stat.stat.pw_name == 'root'
+      - crowdsec_matrix_webhook_secret_stat.stat.mode == '0600'
+    fail_msg: >-
+      Provision {{ crowdsec_matrix_webhook_secret_file }} as a root-owned mode
+      0600 file before applying the home CrowdSec role.
+
+- name: Read the CrowdSec Matrix webhook secret
+  ansible.builtin.slurp:
+    src: "{{ crowdsec_matrix_webhook_secret_file }}"
+  register: crowdsec_matrix_webhook_secret_content
+  no_log: true
+
+- name: Prepare the CrowdSec Matrix webhook secret
+  ansible.builtin.set_fact:
+    crowdsec_matrix_webhook_secret: >-
+      {{ crowdsec_matrix_webhook_secret_content.content | b64decode | trim }}
+  no_log: true
+
+- name: Configure filtered CrowdSec Matrix notifications
+  ansible.builtin.template:
+    src: matrix-http.yaml.j2
+    dest: /etc/crowdsec/notifications/matrix.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+  notify: Restart CrowdSec
+
+- name: Install the home-edge CrowdSec collections
+  ansible.builtin.command:
+    argv:
+      - cscli
+      - collections
+      - install
+      - "{{ item }}"
+  loop: "{{ crowdsec_home_collections }}"
+  register: crowdsec_collection_install
+  changed_when: "'installed' in crowdsec_collection_install.stdout | lower"
+  notify: Restart CrowdSec
+
+- name: Validate the CrowdSec configuration
+  ansible.builtin.command:
+    argv:
+      - crowdsec
+      - -t
+  changed_when: false
+
+- name: Apply pending CrowdSec changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start CrowdSec
+  ansible.builtin.systemd_service:
+    name: crowdsec.service
+    enabled: true
+    state: started
+
+- name: Enable and start the CrowdSec firewall bouncer
+  ansible.builtin.systemd_service:
+    name: crowdsec-firewall-bouncer.service
+    enabled: true
+    state: started
+
+- name: Enroll the home engine in CrowdSec Console
+  ansible.builtin.command:
+    argv:
+      - cscli
+      - console
+      - enroll
+      - --name
+      - "{{ crowdsec_console_engine_name }}"
+      - "{{ crowdsec_console_enrollment_key }}"
+  when: crowdsec_console_enrollment_key | length > 0
+  no_log: true
+  notify: Restart CrowdSec
+
+- name: Verify the local CrowdSec API
+  ansible.builtin.command:
+    argv:
+      - cscli
+      - lapi
+      - status
+  changed_when: false
+
+- name: Verify the CrowdSec firewall bouncer registration
+  ansible.builtin.command:
+    argv:
+      - cscli
+      - bouncers
+      - list
+      - -o
+      - json
+  register: crowdsec_home_bouncers
+  changed_when: false
+  failed_when: >-
+    'home-firewall' not in
+    (crowdsec_home_bouncers.stdout | lower)

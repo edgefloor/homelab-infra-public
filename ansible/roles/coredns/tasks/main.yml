@@ -1,0 +1,193 @@
+---
+- name: Require the canonical routing inventory
+  ansible.builtin.assert:
+    that:
+      - homelab_routing.schema_version == 1
+      - homelab_routing.routes | length > 0
+    fail_msg: inventory/routes.yml must define the version 1 routing inventory
+
+- name: Initialize managed internal DNS hosts
+  ansible.builtin.set_fact:
+    coredns_internal_hosts: []
+
+- name: Derive internal DNS hosts from the canonical inventory
+  ansible.builtin.set_fact:
+    coredns_internal_hosts: >-
+      {{
+        coredns_internal_hosts +
+        [{'address': homelab_routing.caddy_address, 'hostname': item.hostname}]
+      }}
+  loop: "{{ homelab_routing.routes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  when: item.internal_dns | default(false)
+
+- name: Install CoreDNS runtime and validation packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - dnsutils
+    state: present
+
+- name: Create the CoreDNS system group
+  ansible.builtin.group:
+    name: coredns
+    system: true
+
+- name: Create the CoreDNS service account
+  ansible.builtin.user:
+    name: coredns
+    group: coredns
+    home: /var/lib/coredns
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: true
+
+- name: Create CoreDNS directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/coredns, owner: root, group: coredns, mode: '0750' }
+    - { path: /opt/coredns, owner: root, group: root, mode: '0755' }
+    - { path: /opt/coredns/releases, owner: root, group: root, mode: '0755' }
+    - { path: "/opt/coredns/releases/{{ coredns_version }}", owner: root, group: root, mode: '0755' }
+
+- name: Download the checksum-pinned CoreDNS archive
+  ansible.builtin.get_url:
+    url: "{{ coredns_archive_url }}"
+    dest: "/opt/coredns/releases/{{ coredns_version }}/coredns.tgz"
+    checksum: "sha256:{{ coredns_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  register: coredns_archive
+
+- name: Extract the CoreDNS binary
+  ansible.builtin.unarchive:
+    src: "/opt/coredns/releases/{{ coredns_version }}/coredns.tgz"
+    dest: "/opt/coredns/releases/{{ coredns_version }}"
+    remote_src: true
+    include:
+      - coredns
+    creates: "/opt/coredns/releases/{{ coredns_version }}/coredns"
+
+- name: Protect the CoreDNS binary
+  ansible.builtin.file:
+    path: "/opt/coredns/releases/{{ coredns_version }}/coredns"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Link the active CoreDNS binary
+  ansible.builtin.file:
+    src: "/opt/coredns/releases/{{ coredns_version }}/coredns"
+    dest: /usr/local/bin/coredns
+    state: link
+    force: true
+  notify: Restart CoreDNS
+
+- name: Install the internal DNS host map
+  ansible.builtin.template:
+    src: internal.hosts.j2
+    dest: /etc/coredns/internal.hosts
+    owner: root
+    group: coredns
+    mode: '0640'
+  notify: Restart CoreDNS
+
+- name: Install the CoreDNS configuration
+  ansible.builtin.template:
+    src: Corefile.j2
+    dest: /etc/coredns/Corefile
+    owner: root
+    group: coredns
+    mode: '0640'
+  notify: Restart CoreDNS
+
+- name: Install the CoreDNS systemd service
+  ansible.builtin.template:
+    src: coredns.service.j2
+    dest: /etc/systemd/system/coredns.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart CoreDNS
+
+- name: Enable and start CoreDNS
+  ansible.builtin.systemd_service:
+    name: coredns.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply pending CoreDNS changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the installed CoreDNS version
+  ansible.builtin.command: /usr/local/bin/coredns -version
+  register: coredns_version_output
+  changed_when: false
+  failed_when: >-
+    ('CoreDNS-' + coredns_version) not in coredns_version_output.stdout
+
+- name: Check the CoreDNS health endpoint
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8080/health
+    return_content: true
+  register: coredns_health
+  failed_when: coredns_health.status != 200 or coredns_health.content != 'OK'
+
+- name: Resolve each internal hostname over UDP
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - +time=2
+      - +tries=1
+      - '@127.0.0.1'
+      - "{{ item.hostname }}"
+      - A
+  loop: "{{ coredns_internal_hosts }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  register: coredns_internal_resolution
+  changed_when: false
+  failed_when: coredns_internal_resolution.stdout | trim != item.address
+
+- name: Resolve each internal hostname over TCP
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - +tcp
+      - +time=2
+      - +tries=1
+      - '@127.0.0.1'
+      - "{{ item.hostname }}"
+      - A
+  loop: "{{ coredns_internal_hosts }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  register: coredns_tcp_resolution
+  changed_when: false
+  failed_when: coredns_tcp_resolution.stdout | trim != item.address
+
+- name: Verify unmatched names use upstream forwarding
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - +time=2
+      - +tries=1
+      - '@127.0.0.1'
+      - "pangolin.{{ homelab_routing.base_domain }}"
+      - A
+  register: coredns_forward_resolution
+  changed_when: false
+  failed_when: >-
+    homelab_routing.pangolin_vps_address not in
+    coredns_forward_resolution.stdout_lines

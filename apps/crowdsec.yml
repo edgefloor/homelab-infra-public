@@ -1,0 +1,67 @@
+---
+schema_version: 1
+id: crowdsec
+name: CrowdSec edge security
+upstream:
+  repository: https://github.com/crowdsecurity/crowdsec
+  release: v1.8.1
+  commit: 909b5157986a2b2c2163300fdaef5ed01289f7d2
+  distribution: official_container_and_packages
+runtime: hybrid
+environments:
+  staging: { target: home-and-vps-edges, status: deployed_and_validated }
+  production: { target: home-and-vps-edges, status: active_independent_enforcement }
+routing: { caddy: none, pangolin: none }
+health:
+  local_url: http://127.0.0.1:8080/v1/heartbeat
+  expected_units: [crowdsec.service, crowdsec-firewall-bouncer.service]
+  expected_containers: [crowdsec]
+state:
+  paths: [/var/lib/crowdsec/data, /opt/pangolin/config/crowdsec, /etc/crowdsec/bouncers]
+  backup_required_before_cutover: true
+engines:
+  vps:
+    target: remote-platform
+    runtime: docker_compose
+    acquisition: [traefik_access_log, ssh_journal]
+    enforcement: [traefik_bouncer, nftables_bouncer]
+  home:
+    target: caddy
+    runtime: native_systemd
+    acquisition: [caddy_access_log, ssh_journal]
+    enforcement: [nftables_bouncer]
+policy:
+  community_decisions: enforce
+  local_http_scenarios: enforce
+  appsec: disabled_pending_compatibility_validation
+  geoblocking: disabled
+  decision_duration: escalating_from_4h
+  trusted_ranges: [localhost, rfc1918]
+  home_pangolin_ingress: excluded_at_caddy_log
+console:
+  enrollment: active
+  subscription: community
+  engines: [pangolin-vps, home-caddy]
+  signal_sharing: enabled
+  community_blocklist: enabled
+notifications:
+  matrix:
+    status: active
+    sender: "@monitor:matrix.homelab.example"
+    space: "#homelab:matrix.homelab.example"
+    room: "#homelab-security:matrix.homelab.example"
+    transport: authenticated_http_bridge
+    bridge_target: tuwunel
+    alert_policy: new_local_remediation_decisions
+    group_wait_seconds: 30
+    group_threshold: 5
+    matrix_messages: one_per_alert
+    deterministic_retry_deduplication: true
+    source_country:
+      dataset: sapics_user-country
+      lookup: local_ipv4_and_ipv6
+      refresh: daily_verified_download
+      display: flag_and_country_name_above_ip
+      failure_mode: preserve_plain_ip
+  daily_summary: pending
+  appsec_alerts: pending_appsec_enablement

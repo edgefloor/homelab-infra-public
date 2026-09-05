@@ -1,0 +1,14 @@
+{
+  "name": "example-homelab",
+  "private": true,
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "diagrams:dev": "likec4 serve architecture/likec4",
+    "diagrams:validate": "likec4 validate architecture/likec4",
+    "diagrams:format": "likec4 format architecture/likec4",
+    "diagrams:build": "likec4 build architecture/likec4 -o architecture/likec4/dist --base ./"
+  },
+  "devDependencies": {
+    "likec4": "1.59.2"
+  }
+}

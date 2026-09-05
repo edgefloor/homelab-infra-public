@@ -1,0 +1,46 @@
+---
+- name: Compile deployment coverage requirements
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Build per-host discovery and dependency configuration
+      ansible.builtin.command:
+        argv: [uv, run, --with, pyyaml, python, scripts/build_security_config.py, --output, /tmp/homelab-security-config]
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+- name: Read the existing Matrix update-webhook credential
+  hosts: tuwunel_servers
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Read the update webhook secret
+      ansible.builtin.slurp:
+        src: /etc/crowdsec-matrix-bridge/webhook-secret
+      register: update_monitor_webhook_credential
+      no_log: true
+
+    - name: Publish the update webhook secret for monitored hosts
+      ansible.builtin.set_fact:
+        update_monitor_managed_webhook_secret: >-
+          {{ update_monitor_webhook_credential.content | b64decode | trim }}
+      no_log: true
+
+- name: Install release and CVE monitoring
+  hosts: beszel_agents:plan_runners
+  become: true
+  vars:
+    update_monitor_webhook_secret: >-
+      {{ hostvars['pangolin']['update_monitor_managed_webhook_secret'] }}
+  roles:
+    - update_monitor
+
+- name: Enroll externally managed LXCs through Proxmox guest access
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install guest scanners without changing application ownership
+      ansible.builtin.include_role:
+        name: update_monitor
+        tasks_from: external

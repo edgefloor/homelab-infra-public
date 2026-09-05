@@ -1,0 +1,8 @@
+name: example/vps-trusted
+description: Ignore localhost and private infrastructure sources
+whitelist:
+  reason: trusted VPS infrastructure
+  cidr:
+{% for range in crowdsec_trusted_ranges %}
+    - {{ range }}
+{% endfor %}

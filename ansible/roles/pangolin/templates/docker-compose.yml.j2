@@ -1,0 +1,102 @@
+name: pangolin
+
+services:
+  pangolin:
+    image: {{ pangolin_image }}
+    container_name: pangolin
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+    volumes:
+      - ./config:/app/config
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/v1/"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+
+  gerbil:
+    image: {{ gerbil_image }}
+    container_name: gerbil
+    restart: unless-stopped
+    depends_on:
+      pangolin:
+        condition: service_healthy
+    command:
+      - --reachableAt=http://gerbil:3004
+      - --generateAndSaveKeyTo=/var/config/key
+      - --remoteConfig=http://pangolin:3001/api/v1/
+    volumes:
+      - ./config:/var/config
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    ports:
+      - 51820:51820/udp
+      - 21820:21820/udp
+      - {{ matrix_rtc_turn_tls_port }}:{{ matrix_rtc_turn_tls_port }}/tcp
+      - 443:443
+      - 443:443/udp
+      - 80:80
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3004/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  crowdsec:
+    image: {{ crowdsec_image }}
+    container_name: crowdsec
+    restart: unless-stopped
+    environment:
+      COLLECTIONS: crowdsecurity/traefik crowdsecurity/linux
+    ports:
+      - 127.0.0.1:8080:8080
+    volumes:
+      - ./config/crowdsec:/etc/crowdsec
+      - ./config/crowdsec/data:/var/lib/crowdsec/data
+      - ./config/traefik/logs:/var/log/traefik:ro
+      - /var/log/journal:/var/log/host:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  traefik:
+    image: {{ traefik_image }}
+    container_name: traefik
+    restart: unless-stopped
+    network_mode: service:gerbil
+    depends_on:
+      pangolin:
+        condition: service_healthy
+      gerbil:
+        condition: service_healthy
+      crowdsec:
+        condition: service_healthy
+    command:
+      - --configFile=/etc/traefik/traefik_config.yml
+    volumes:
+      - ./config/traefik:/etc/traefik:ro
+      - ./config/letsencrypt:/letsencrypt
+      - ./config/traefik/logs:/var/log/traefik
+      - /etc/pangolin-crowdsec-traefik-key:/run/secrets/crowdsec_traefik_key:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  default:
+    driver: bridge
+    name: pangolin_frontend

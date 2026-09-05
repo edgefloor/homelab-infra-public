@@ -1,0 +1,31 @@
+---
+schema_version: 1
+id: seerr
+name: Seerr
+upstream:
+  repository: https://github.com/seerr-team/seerr
+  release: refs/pull/2715/head
+  commit: aebd4433738ff01a471642210537bb4e1020d1c2
+  distribution: source_build
+  channel: oidc_preview
+runtime: native_systemd
+environments:
+  staging:
+    target: media-automation
+    status: migrated_and_validated
+  production:
+    target: media-automation
+    status: active_lan_via_caddy_remote_via_pangolin
+routing:
+  caddy: lan
+  pangolin: remote
+authentication:
+  oidc: pocket_id
+  allowed_groups: [media, jellyfin]
+  remote_roles: [Media, Jellyfin]
+health:
+  local_url: http://127.0.0.1:5055/api/v1/status
+  expected_units: [seerr.service]
+state:
+  paths: [/var/lib/seerr/config]
+  backup_required_before_cutover: true

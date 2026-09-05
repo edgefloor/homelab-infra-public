@@ -1,0 +1,40 @@
+[Unit]
+Description=CrowdSec Matrix notification bridge
+After=network-online.target tuwunel.service
+Wants=network-online.target
+Requires=tuwunel.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+Environment=IP_COUNTRY_DB_DIR={{ crowdsec_ip_country_data_dir }}
+ExecStart=/usr/local/libexec/crowdsec-matrix-bridge --listen 0.0.0.0:{{ crowdsec_matrix_bridge_port }} --matrix-url http://127.0.0.1:{{ tuwunel_port }}
+LoadCredential=matrix-access-token:{{ crowdsec_matrix_bridge_credentials_dir }}/matrix-access-token
+LoadCredential=matrix-room-health:{{ crowdsec_matrix_bridge_credentials_dir }}/matrix-room-health
+LoadCredential=matrix-room-security:{{ crowdsec_matrix_bridge_credentials_dir }}/matrix-room-security
+LoadCredential=matrix-room-releases:{{ crowdsec_matrix_bridge_credentials_dir }}/matrix-room-releases
+LoadCredential=matrix-room-vulnerabilities:{{ crowdsec_matrix_bridge_credentials_dir }}/matrix-room-vulnerabilities
+LoadCredential=matrix-room-agent:{{ crowdsec_matrix_bridge_credentials_dir }}/matrix-room-agent
+LoadCredential=webhook-secret:{{ crowdsec_matrix_bridge_credentials_dir }}/webhook-secret
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+---
+- name: Configure the Pangolin Newt connector
+  hosts: pangolin_connectors
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  roles:
+    - common_baseline
+    - newt

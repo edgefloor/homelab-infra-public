@@ -1,0 +1,6 @@
+---
+- name: Configure the MatrixRTC media plane
+  hosts: remote_platform
+  become: true
+  roles:
+    - matrix_rtc

@@ -1,0 +1,7 @@
+---
+- name: Configure NeroCD
+  hosts: nerocd_servers
+  become: true
+  roles:
+    - common_baseline
+    - nerocd

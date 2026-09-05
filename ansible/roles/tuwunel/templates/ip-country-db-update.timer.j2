@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the local user-country IP database daily
+
+[Timer]
+OnCalendar={{ crowdsec_ip_country_update_calendar }}
+RandomizedDelaySec={{ crowdsec_ip_country_update_jitter }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

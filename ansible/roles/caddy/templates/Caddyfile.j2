@@ -1,0 +1,156 @@
+{
+    admin 127.0.0.1:2019
+    servers {
+        trusted_proxies static {{ caddy_trusted_proxy_ranges | join(' ') }}
+        trusted_proxies_strict
+    }
+}
+
+http://127.0.0.1 {
+    handle /healthz {
+        respond "ok" 200
+    }
+
+    respond "{{ caddy_staging_message }}" 200
+}
+
+*.{{ caddy_domain }} {
+    tls {
+        dns cloudflare {env.CF_API_TOKEN}
+        resolvers 1.1.1.1
+    }
+
+    log {
+        output file {{ caddy_access_log_path }} {
+            mode 0640
+            roll_size 100MiB
+            roll_at 00:00
+            roll_keep 7
+            roll_keep_for 168h
+        }
+        format json
+    }
+
+    @pangolin_ingress remote_ip {{ caddy_pangolin_source_ranges | join(' ') }}
+    log_skip @pangolin_ingress
+
+{% for route in caddy_routes %}
+{% if route.auth_proxy_header is defined %}
+    map {http.request.header.{{ route.auth_proxy_identity_header }}} {route_{{ loop.index }}_auth_proxy_user} {
+{% for identity, username in route.auth_proxy_user_mappings.items() %}
+        {{ identity }} {{ username }}
+{% endfor %}
+        default ""
+    }
+
+{% endif %}
+{% endfor %}
+{% for route in caddy_routes %}
+{% if route.internal_source_only | default(false) %}
+    @route_{{ loop.index }}_allowed {
+        host {{ route.hostname }}
+        remote_ip {{ caddy_internal_source_ranges | join(' ') }}
+    }
+    @route_{{ loop.index }}_denied host {{ route.hostname }}
+    handle @route_{{ loop.index }}_allowed {
+{% else %}
+    @route_{{ loop.index }} host {{ route.hostname }}
+    handle @route_{{ loop.index }} {
+{% endif %}
+{% for denied_path in route.denied_paths | default([]) %}
+        respond {{ denied_path }} 403
+{% endfor %}
+
+{% if route.mcp_upstream is defined %}
+        handle {{ route.mcp_path }} {
+            reverse_proxy {{ route.mcp_upstream }}
+        }
+{% endif %}
+{% if route.crowdsec_webhook_upstream is defined %}
+        handle {{ route.crowdsec_webhook_path }} {
+            uri replace {{ route.crowdsec_webhook_path }} /crowdsec
+            reverse_proxy {{ route.crowdsec_webhook_upstream }}
+        }
+{% endif %}
+{% if route.openid_redirect is defined %}
+        handle {{ route.openid_redirect.path }} {
+            header Cache-Control "no-store"
+            header Content-Security-Policy "default-src 'none'; connect-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+            header Content-Type "text/html; charset=utf-8"
+            header X-Content-Type-Options "nosniff"
+            respond <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proxmox SSO</title>
+  <style>html{color-scheme:light dark;font:16px system-ui}body{display:grid;min-height:100vh;margin:0;place-items:center}</style>
+</head>
+<body>
+  <p id="status">Redirecting to sign in…</p>
+  <script>
+    (async () => {
+      const status = document.getElementById('status');
+      try {
+        const body = new URLSearchParams({
+          realm: {{ route.openid_redirect.realm | to_json }},
+          'redirect-url': window.location.origin,
+        });
+        const response = await fetch('/api2/json/access/openid/auth-url', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+          body,
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        const result = await response.json();
+        if (!response.ok || typeof result.data !== 'string') {
+          throw new Error('Proxmox did not return an authorization URL');
+        }
+        window.location.replace(result.data);
+      } catch (error) {
+        status.textContent = 'Could not start SSO. Reload this page to try again.';
+      }
+    })();
+  </script>
+</body>
+</html>
+HTML 200
+        }
+{% endif %}
+
+{% if route.mcp_upstream is defined or route.crowdsec_webhook_upstream is defined %}
+        handle {
+            reverse_proxy {{ route.upstream }}
+        }
+{% elif route.auth_proxy_header is defined %}
+        route {
+            @route_{{ loop.index }}_auth_proxy remote_ip {{ caddy_pangolin_source_ranges | join(' ') }}
+            reverse_proxy @route_{{ loop.index }}_auth_proxy {{ route.upstream }} {
+                header_up {{ route.auth_proxy_header }} {route_{{ loop.index }}_auth_proxy_user}
+            }
+            reverse_proxy {{ route.upstream }} {
+                header_up -{{ route.auth_proxy_header }}
+            }
+        }
+{% elif route.tls_insecure_skip_verify | default(false) %}
+        reverse_proxy {{ route.upstream }} {
+            transport http {
+                tls_insecure_skip_verify
+            }
+        }
+{% else %}
+        reverse_proxy {{ route.upstream }}
+{% endif %}
+    }
+
+{% if route.internal_source_only | default(false) %}
+    handle @route_{{ loop.index }}_denied {
+        respond 403
+    }
+
+{% endif %}
+{% endfor %}
+    respond 404
+}

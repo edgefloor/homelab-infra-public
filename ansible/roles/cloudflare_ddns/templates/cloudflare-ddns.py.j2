@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+import ipaddress
+import json
+import os
+import urllib.parse
+import urllib.request
+
+API = "https://api.cloudflare.com/client/v4"
+ZONE = {{ homelab_routing.base_domain | to_json }}
+PUBLIC_IP_URL = {{ cloudflare_ddns_public_ip_url | to_json }}
+ROUTES = {{ cloudflare_managed_routes | to_json }}
+RECORD_TYPE = {{ homelab_routing.cloudflare_record.type | to_json }}
+RECORD_TTL = {{ homelab_routing.cloudflare_record.ttl | to_json }}
+RECORD_PROXIED = {{ homelab_routing.cloudflare_record.proxied | ternary('True', 'False') }}
+TOKEN = os.environ.get("CF_API_TOKEN")
+
+
+def request(method, path, payload=None):
+    data = None if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(
+        API + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Content-Type": "application/json",
+            "User-Agent": "homelab-cloudflare-ddns/1",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as response:
+        body = json.load(response)
+    if not body.get("success"):
+        raise RuntimeError(body.get("errors") or "Cloudflare API request failed")
+    return body
+
+
+def public_ipv4():
+    req = urllib.request.Request(
+        PUBLIC_IP_URL,
+        headers={"User-Agent": "homelab-cloudflare-ddns/1"},
+    )
+    with urllib.request.urlopen(req, timeout=20) as response:
+        values = dict(
+            line.split("=", 1)
+            for line in response.read().decode().splitlines()
+            if "=" in line
+        )
+    address = ipaddress.ip_address(values.get("ip", ""))
+    if address.version != 4 or not address.is_global:
+        raise RuntimeError("public IP endpoint did not return a global IPv4 address")
+    return str(address)
+
+
+if not TOKEN:
+    raise RuntimeError("CF_API_TOKEN is missing")
+
+address = public_ipv4()
+target_addresses = {
+    "home_dynamic": address,
+    "pangolin_vps": {{ homelab_routing.pangolin_vps_address | to_json }},
+    "internal_caddy": {{ homelab_routing.caddy_address | to_json }},
+}
+zones = request("GET", "/zones?" + urllib.parse.urlencode({"name": ZONE}))["result"]
+if len(zones) != 1:
+    raise RuntimeError(f"expected one Cloudflare zone, found {len(zones)}")
+zone_id = zones[0]["id"]
+
+for route in ROUTES:
+    name = route["name"]
+    desired_address = target_addresses[route["target"]]
+    records = request(
+        "GET",
+        f"/zones/{zone_id}/dns_records?"
+        + urllib.parse.urlencode({"type": RECORD_TYPE, "name": name}),
+    )["result"]
+    if len(records) > 1:
+        raise RuntimeError(f"expected at most one {RECORD_TYPE} record for {name}, found {len(records)}")
+    if not records:
+        payload = {
+            "type": RECORD_TYPE,
+            "name": name,
+            "content": desired_address,
+            "ttl": RECORD_TTL,
+            "proxied": RECORD_PROXIED,
+        }
+        request("POST", f"/zones/{zone_id}/dns_records", payload)
+        print(f"created {name}")
+        continue
+    record = records[0]
+    if (
+        record["content"] == desired_address
+        and record["ttl"] == RECORD_TTL
+        and record["proxied"] == RECORD_PROXIED
+    ):
+        print(f"unchanged {name}")
+        continue
+    payload = {
+        "type": RECORD_TYPE,
+        "name": name,
+        "content": desired_address,
+        "ttl": RECORD_TTL,
+        "proxied": RECORD_PROXIED,
+        "comment": record.get("comment"),
+        "tags": record.get("tags", []),
+    }
+    request("PUT", f"/zones/{zone_id}/dns_records/{record['id']}", payload)
+    print(f"reconciled {name}")

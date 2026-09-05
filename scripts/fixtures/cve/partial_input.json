@@ -1,0 +1,210 @@
+{
+  "synthetic": true,
+  "record": {
+    "schema": 1,
+    "record_id": "0123456789abcdef",
+    "target": "example",
+    "event_id": "$synthetic",
+    "status": "partial",
+    "scope": {
+      "schema": 2,
+      "generated_at": "2099-01-01T00:00:00Z",
+      "truncated": true,
+      "groups": [
+        {
+          "id": "CVE-2099-1000",
+          "package": "example.org/handler",
+          "fixed": "2.1",
+          "occurrences": [
+            {
+              "artifact": "docker.io/example/service:2.0",
+              "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "artifact_type": "container_image",
+              "reported_file": "/usr/local/bin/service",
+              "containers": [
+                {
+                  "id": "0000000000000000000000000000000000000000000000000000000000000001",
+                  "name": "service-1"
+                }
+              ],
+              "deployed_path_ids": [
+                "p6aaa424093770310d5c96b74db72060a"
+              ]
+            },
+            {
+              "artifact": "docker.io/example/service:2.0",
+              "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "artifact_type": "container_image",
+              "reported_file": "/usr/local/bin/service",
+              "containers": [
+                {
+                  "id": "0000000000000000000000000000000000000000000000000000000000000002",
+                  "name": "service-2"
+                }
+              ],
+              "deployed_path_ids": [
+                "p99c0233112cc3ed03cdf6a72dc43b6d2"
+              ]
+            }
+          ],
+          "group_id": "gce62f22d964568587b6c",
+          "path_ids": [
+            "p6aaa424093770310d5c96b74db72060a",
+            "p99c0233112cc3ed03cdf6a72dc43b6d2"
+          ],
+          "occurrence_count": 2
+        }
+      ],
+      "deployed_paths": [
+        {
+          "path_id": "p6aaa424093770310d5c96b74db72060a",
+          "display_label": "service-1",
+          "container": {
+            "id": "0000000000000000000000000000000000000000000000000000000000000001",
+            "name": "service-1"
+          },
+          "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "exact_artifact": "docker.io/example/service:2.0",
+          "occurrence_count": 1,
+          "reported_files": [
+            "/usr/local/bin/service"
+          ],
+          "packages": [
+            "example.org/handler"
+          ]
+        },
+        {
+          "path_id": "p99c0233112cc3ed03cdf6a72dc43b6d2",
+          "display_label": "service-2",
+          "container": {
+            "id": "0000000000000000000000000000000000000000000000000000000000000002",
+            "name": "service-2"
+          },
+          "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "exact_artifact": "docker.io/example/service:2.0",
+          "occurrence_count": 1,
+          "reported_files": [
+            "/usr/local/bin/service"
+          ],
+          "packages": [
+            "example.org/handler"
+          ]
+        }
+      ],
+      "occurrence_count": 2,
+      "complete": false
+    },
+    "investigation": {
+      "groups": [
+        {
+          "group_id": "gce62f22d964568587b6c",
+          "mechanism": "A request must reach the optional handler to trigger the affected behavior.",
+          "mechanism_refs": [
+            "advisory-0"
+          ],
+          "paths": [
+            {
+              "path_id": "p6aaa424093770310d5c96b74db72060a",
+              "preconditions": [
+                {
+                  "condition": "The optional request handler must be enabled.",
+                  "state": "contradicted",
+                  "claim": "The affected handler is disabled in the running service configuration.",
+                  "refs": [
+                    "runtime-0-0"
+                  ]
+                }
+              ],
+              "reachability": "not_found",
+              "decision": "normal_update",
+              "rationale": "The affected handler is disabled in the running service configuration.",
+              "limitations": [],
+              "patched_artifact": "unverified",
+              "patch_refs": [],
+              "next_check": null
+            },
+            {
+              "path_id": "p99c0233112cc3ed03cdf6a72dc43b6d2",
+              "preconditions": [
+                {
+                  "condition": "The optional request handler must be enabled.",
+                  "state": "contradicted",
+                  "claim": "The affected handler is disabled in the running service configuration.",
+                  "refs": [
+                    "runtime-0-1"
+                  ]
+                }
+              ],
+              "reachability": "not_found",
+              "decision": "normal_update",
+              "rationale": "The affected handler is disabled in the running service configuration.",
+              "limitations": [],
+              "patched_artifact": "unverified",
+              "patch_refs": [],
+              "next_check": null
+            }
+          ]
+        }
+      ]
+    },
+    "metrics": {},
+    "started_at": 4070908800
+  },
+  "receipts": [
+    {
+      "protocol": 2,
+      "observation_id": "advisory-0",
+      "timestamp": 4070908800,
+      "operation": "official_advisory",
+      "arguments": {
+        "advisory": "CVE-2099-1000"
+      },
+      "identity": {},
+      "status": "success",
+      "truncated": false,
+      "result": {
+        "mechanism": "A request reaches the optional handler."
+      }
+    },
+    {
+      "protocol": 2,
+      "observation_id": "runtime-0-0",
+      "timestamp": 4070908801,
+      "operation": "read_config",
+      "arguments": {
+        "container": "0000000000000000000000000000000000000000000000000000000000000001",
+        "path": "/etc/service/config.yml"
+      },
+      "identity": {
+        "container_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "status": "success",
+      "truncated": false,
+      "result": {
+        "content": "handler: false"
+      },
+      "limitations": []
+    },
+    {
+      "protocol": 2,
+      "observation_id": "runtime-0-1",
+      "timestamp": 4070908801,
+      "operation": "read_config",
+      "arguments": {
+        "container": "0000000000000000000000000000000000000000000000000000000000000002",
+        "path": "/etc/service/config.yml"
+      },
+      "identity": {
+        "container_id": "0000000000000000000000000000000000000000000000000000000000000002",
+        "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "status": "success",
+      "truncated": false,
+      "result": {
+        "content": "handler: false"
+      },
+      "limitations": []
+    }
+  ]
+}

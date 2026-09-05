@@ -1,0 +1,78 @@
+---
+- name: Install the interactive GPU monitor
+  ansible.builtin.apt:
+    name: "{{ proxmox_gpu_nvtop_package }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Check the NVIDIA device initializer
+  ansible.builtin.stat:
+    path: /usr/bin/nvidia-modprobe
+  register: proxmox_gpu_nvidia_modprobe
+
+- name: Require the host NVIDIA driver tools
+  ansible.builtin.assert:
+    that: proxmox_gpu_nvidia_modprobe.stat.executable | default(false)
+    fail_msg: /usr/bin/nvidia-modprobe is required before configuring GPU guest startup
+
+- name: Install the NVIDIA device initialization service
+  ansible.builtin.copy:
+    src: nvidia-device-init.service
+    dest: "/etc/systemd/system/{{ proxmox_gpu_device_init_service }}"
+    owner: root
+    group: root
+    mode: '0644'
+  register: proxmox_gpu_device_init_unit
+
+- name: Create GPU consumer service drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - pve-guests
+    - beszel-agent
+
+- name: Order GPU consumers after NVIDIA device initialization
+  ansible.builtin.copy:
+    src: nvidia-device-init.conf
+    dest: "/etc/systemd/system/{{ item }}.service.d/nvidia-device-init.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - pve-guests
+    - beszel-agent
+  register: proxmox_gpu_consumer_dropins
+
+- name: Enable and start NVIDIA device initialization
+  ansible.builtin.systemd_service:
+    name: "{{ proxmox_gpu_device_init_service }}"
+    enabled: true
+    state: started
+    daemon_reload: >-
+      {{ proxmox_gpu_device_init_unit.changed or proxmox_gpu_consumer_dropins.changed }}
+
+- name: Verify the NVIDIA control device
+  ansible.builtin.stat:
+    path: /dev/nvidiactl
+  register: proxmox_gpu_control_device
+  failed_when: not proxmox_gpu_control_device.stat.exists
+
+- name: Verify NVIDIA metrics are available
+  ansible.builtin.command:
+    argv:
+      - nvidia-smi
+      - --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw
+      - --format=csv,noheader,nounits
+  changed_when: false
+
+- name: Verify nvtop is installed
+  ansible.builtin.command:
+    argv:
+      - nvtop
+      - --version
+  changed_when: false

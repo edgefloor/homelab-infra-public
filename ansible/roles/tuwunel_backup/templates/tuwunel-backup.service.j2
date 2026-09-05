@@ -1,0 +1,16 @@
+[Unit]
+Description=Stream an encrypted Tuwunel backup from the VPS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n /run/tuwunel-backup.lock /usr/local/sbin/tuwunel-backup-receive
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

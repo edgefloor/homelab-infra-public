@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+set -a
+. /etc/homelab-tofu-proxmox.env
+set +a
+
+exec /usr/bin/tofu "$@"

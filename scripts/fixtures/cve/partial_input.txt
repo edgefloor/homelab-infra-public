@@ -1,0 +1,9 @@
+CVE-2099-1000 | example / service-1, service-2 — routine update
+
+The affected handler is disabled in the running service configuration.
+
+The scanner input was incomplete; this assessment covers only the supplied findings.
+
+Keep running; update during normal maintenance once a fix is verified.
+
+Evidence: 0123456789abcdef

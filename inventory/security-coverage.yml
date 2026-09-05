@@ -1,0 +1,68 @@
+---
+# Required coverage, not a claim that a deployment has passed its checks.
+schema_version: 1
+scope:
+  systems: inventory/workloads.yml
+  infrastructure: ansible/inventory/hosts.yml
+  applications: apps/*.yml
+  discovery_required: [systemd_services_and_timers, scheduled_jobs, containers, listeners, running_executables, loaded_libraries, mounts, plugins]
+  unknown_deployment: coverage_failure
+  scanner_not_enrolled: unknown
+  max_scan_age_hours: 36
+
+# This is the design contract for a future executor. No executor consumes it yet.
+autonomy:
+  patching_enabled: false
+  emergency_measures_enabled: false
+  patch_requirements: [current_artifact_identity, dependency_coverage, exposure_assessment, verified_candidate, tested_recovery, post_change_checks, explicit_action_policy]
+  emergency_requirements: [verified_target, explicit_action_policy, bounded_scope, expiry, control_access_preserved, recovery_check]
+
+layers:
+  platform: OS packages, running kernel, firmware or native drivers where used, and runtime versions
+  application: Actual deployed application version and its own vendor advisories
+  dependencies: Installed and embedded dependencies, plugins, and shipped browser assets
+  runtime: Running process identity, loaded libraries, image changes, and mounted replacement code
+  exposure: Effective routes, listeners, ACLs, authentication, trust boundaries, and exploit preconditions
+  provenance: Source revision and build dependency inventory bound to the deployed artifact digest
+  recovery: Validated candidate, state compatibility, backup restore rehearsal, health checks, and rollback
+
+# Every application manifest must have a profile. A profile declares the adapters
+# required, including ones not implemented yet; it does not grant coverage.
+applications:
+  beszel: {targets: [pangolin], adapters: [container_image, go_binary, browser_build_sbom]}
+  caddy: {targets: [caddy], adapters: [go_binary, vendor_advisories, caddy_modules]}
+  coredns: {targets: [network-ops], adapters: [go_binary, vendor_advisories, coredns_plugins]}
+  crowdsec: {targets: [caddy, pangolin], adapters: [go_binary, container_image, vendor_advisories, security_collections]}
+  filebrowser: {targets: [downloads], adapters: [go_binary, browser_build_sbom]}
+  jellyfin: {targets: [jellyfin], adapters: [dotnet_deps, dotnet_runtime, native_libraries, browser_build_sbom, application_plugins, vendor_advisories]}
+  matrix-rtc: {targets: [pangolin], adapters: [container_image, go_binary, runtime_mounts]}
+  miniflux-mcp: {targets: [miniflux], adapters: [go_binary, vendor_advisories]}
+  miniflux: {targets: [miniflux], adapters: [go_binary, browser_build_sbom, vendor_advisories]}
+  nerocd: {targets: [nerocd], adapters: [container_image, go_binary, browser_build_sbom, runtime_mounts, vendor_advisories]}
+  newt: {targets: [pangolin-connector], adapters: [go_binary, vendor_advisories]}
+  openai-tunnel-client: {targets: [miniflux], adapters: [go_binary, vendor_advisories]}
+  pangolin: {targets: [pangolin], adapters: [container_image, node_installed, browser_build_sbom, runtime_mounts, vendor_advisories]}
+  pocket-id: {targets: [pocket-id], adapters: [go_binary, browser_build_sbom, vendor_advisories]}
+  prowlarr: {targets: [media-automation], adapters: [dotnet_deps, dotnet_runtime, native_libraries, browser_build_sbom, vendor_advisories]}
+  radarr: {targets: [media-automation], adapters: [dotnet_deps, dotnet_runtime, native_libraries, browser_build_sbom, vendor_advisories]}
+  seerr: {targets: [media-automation], adapters: [node_installed, node_runtime, browser_build_sbom, vendor_advisories]}
+  shelfmark: {targets: [media-automation], adapters: [python_installed, python_runtime, browser_build_sbom, vendor_advisories]}
+  sonarr: {targets: [media-automation], adapters: [dotnet_deps, dotnet_runtime, native_libraries, browser_build_sbom, vendor_advisories]}
+  transmission: {targets: [downloads], adapters: [os_packages, native_libraries, vendor_advisories]}
+  tuwunel: {targets: [pangolin], adapters: [rust_artifact_sbom, native_libraries, vendor_advisories]}
+
+# These do not currently have standalone apps/*.yml manifests. Live discovery
+# must also reconcile services not listed here; this list is not an allowlist
+# permitting undiscovered software to disappear from the denominator.
+additional_deployments:
+  next-plaid: {targets: [next-plaid], adapters: [rust_artifact_sbom, native_libraries, gpu_runtime, vendor_advisories]}
+  firecrawl: {targets: [firecrawl], adapters: [container_image, node_installed, runtime_mounts, vendor_advisories]}
+  eu-law-postgresql: {targets: [eu-law-db], adapters: [os_packages, database_extensions, vendor_advisories]}
+  miniflux-postgresql: {targets: [miniflux], adapters: [os_packages, database_extensions, vendor_advisories]}
+  nerocd-postgresql: {targets: [nerocd], adapters: [container_image, database_extensions, vendor_advisories]}
+  plan-runner: {targets: [plan-runner], adapters: [python_installed, node_installed, dotnet_runtime, go_binary, vendor_advisories]}
+  diagnostic-agent: {targets: [plan-runner], adapters: [python_installed, rust_artifact_sbom, application_plugins]}
+  beszel-agents: {targets: [proxmox, caddy, jellyfin, media-automation, downloads, miniflux, pocket-id, pangolin-connector, network-ops, nerocd, pangolin], adapters: [go_binary]}
+  matrix-alert-bridge: {targets: [pangolin], adapters: [python_installed, python_runtime, source_identity]}
+  coredns-ddns: {targets: [network-ops], adapters: [python_runtime, source_identity]}
+  hypervisor: {targets: [proxmox], adapters: [os_packages, running_kernel, native_libraries, gpu_runtime, vendor_advisories]}

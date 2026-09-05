@@ -1,0 +1,117 @@
+---
+- name: Create the Pocket ID group
+  ansible.builtin.group:
+    name: "{{ pocket_id_group }}"
+    system: true
+
+- name: Create the Pocket ID user
+  ansible.builtin.user:
+    name: "{{ pocket_id_user }}"
+    group: "{{ pocket_id_group }}"
+    home: /opt/pocket-id
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+
+- name: Create Pocket ID directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /var/cache/homelab-tools, owner: root, group: root, mode: '0755' }
+    - { path: /opt/pocket-id, owner: root, group: root, mode: '0755' }
+    - { path: /opt/pocket-id/releases, owner: root, group: root, mode: '0755' }
+    - { path: "/opt/pocket-id/releases/{{ pocket_id_version }}", owner: root, group: root, mode: '0755' }
+    - { path: /opt/pocket-id/data, owner: "{{ pocket_id_user }}", group: "{{ pocket_id_group }}", mode: '0700' }
+
+- name: Download the official Pocket ID release
+  ansible.builtin.get_url:
+    url: "{{ pocket_id_binary_url }}"
+    dest: "/opt/pocket-id/releases/{{ pocket_id_version }}/pocket-id"
+    checksum: "sha256:{{ pocket_id_binary_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+  register: pocket_id_binary
+
+- name: Link the active Pocket ID binary
+  ansible.builtin.file:
+    src: "/opt/pocket-id/releases/{{ pocket_id_version }}/pocket-id"
+    dest: /opt/pocket-id/pocket-id
+    state: link
+    force: true
+  register: pocket_id_binary_link
+
+- name: Check for migrated Pocket ID configuration
+  ansible.builtin.stat:
+    path: /etc/pocket-id.env
+  register: pocket_id_configuration
+
+- name: Require migrated configuration before starting Pocket ID
+  ansible.builtin.assert:
+    that: pocket_id_configuration.stat.exists
+    fail_msg: /etc/pocket-id.env must be migrated before Pocket ID can start
+  when: pocket_id_start_service
+
+- name: Protect migrated Pocket ID configuration
+  ansible.builtin.file:
+    path: /etc/pocket-id.env
+    owner: root
+    group: "{{ pocket_id_group }}"
+    mode: '0640'
+  when: pocket_id_configuration.stat.exists
+
+- name: Configure Pocket ID reverse-proxy trust
+  ansible.builtin.lineinfile:
+    path: /etc/pocket-id.env
+    regexp: '^TRUST_PROXY='
+    line: "TRUST_PROXY={{ pocket_id_trust_proxy }}"
+  when: pocket_id_configuration.stat.exists
+
+- name: Install the Pocket ID service
+  ansible.builtin.template:
+    src: pocketid.service.j2
+    dest: /etc/systemd/system/pocketid.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: pocket_id_unit
+
+- name: Reload systemd for Pocket ID
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: pocket_id_unit.changed
+
+- name: Apply requested Pocket ID service state
+  ansible.builtin.systemd_service:
+    name: pocketid.service
+    enabled: "{{ pocket_id_start_service }}"
+    state: >-
+      {{
+        'restarted'
+        if pocket_id_start_service and
+        (pocket_id_binary.changed or pocket_id_binary_link.changed or pocket_id_unit.changed)
+        else ('started' if pocket_id_start_service else 'stopped')
+      }}
+
+- name: Verify the installed Pocket ID artifact
+  ansible.builtin.stat:
+    path: "/opt/pocket-id/releases/{{ pocket_id_version }}/pocket-id"
+    checksum_algorithm: sha256
+  register: pocket_id_artifact
+  failed_when: >-
+    not pocket_id_artifact.stat.exists or
+    pocket_id_artifact.stat.checksum != pocket_id_binary_sha256
+
+- name: Check the Pocket ID health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ pocket_id_port }}/health"
+    status_code: 200
+  register: pocket_id_health
+  retries: 30
+  delay: 2
+  until: pocket_id_health.status == 200
+  when: pocket_id_start_service

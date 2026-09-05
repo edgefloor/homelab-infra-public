@@ -1,0 +1,20 @@
+---
+schema_version: 1
+id: pocket-id
+name: Pocket ID
+upstream:
+  repository: https://github.com/pocket-id/pocket-id
+  release: v2.14.0
+  commit: 5521266227205dccb57ba58d820c833a5701346d
+  distribution: official_binary
+runtime: native_systemd
+environments:
+  staging: { target: pocket-id, status: migrated_and_validated }
+  production: { target: pocket-id, status: active_via_caddy }
+routing: { caddy: direct_edge, pangolin: none }
+health:
+  local_url: http://127.0.0.1:1411/health
+  expected_units: [pocketid.service]
+state:
+  paths: [/etc/pocket-id.env, /opt/pocket-id/data]
+  backup_required_before_cutover: true

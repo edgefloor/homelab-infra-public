@@ -1,0 +1,27 @@
+---
+schema_version: 1
+id: nerocd
+name: NeroCD
+upstream:
+  repository: https://github.com/edgefloor/NeroCD
+  release: v0.3.23
+  commit: 8224d9e99980e5370c730c1a0d29f2115d9b42d1
+  distribution: official_container_and_packages
+runtime: docker_compose
+environments:
+  staging: { target: nerocd, status: deployed_and_validated }
+  production: { target: nerocd, status: active_internal_lan_only }
+routing: { caddy: lan, pangolin: none }
+health:
+  local_url: http://10.42.0.213:8080/api/v1/ready
+  expected_units: [docker.service, nerocd.service]
+state:
+  paths: [/opt/nerocd/runtime/.env, /var/lib/docker/volumes]
+  backup_required_before_cutover: false
+authentication:
+  native: local_admin_recovery
+  oidc: supported_unconfigured
+network:
+  exposure: internal_only
+  dns: coredns_only
+  ingress: caddy_only

@@ -1,0 +1,26 @@
+---
+schema_version: 1
+id: caddy
+name: Caddy
+upstream:
+  repository: https://github.com/caddyserver/caddy
+  release: v2.11.4
+  commit: e2eee6a7fce366321294c9c2a79f3146891dcbdf
+  distribution: source_build
+runtime: native_systemd
+environments:
+  staging:
+    target: caddy
+    status: deployed_and_validated
+  production:
+    target: caddy
+    status: active_https_router_443_cutover_verified
+routing:
+  caddy: direct_edge
+  pangolin: none
+health:
+  local_url: http://127.0.0.1:2019/config/
+  expected_units: [caddy.service]
+state:
+  paths: [/var/lib/caddy, /etc/caddy]
+  backup_required_before_cutover: false

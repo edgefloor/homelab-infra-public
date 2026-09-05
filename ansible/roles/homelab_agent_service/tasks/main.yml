@@ -1,0 +1,172 @@
+---
+- name: Require the externally managed Matrix credentials
+  ansible.builtin.assert:
+    that:
+      - homelab_agent_matrix_access_token | length > 0
+      - homelab_agent_matrix_room | length > 0
+      - homelab_agent_matrix_health_room | length > 0
+      - homelab_agent_matrix_vulnerabilities_room | length > 0
+    fail_msg: The Matrix bot token and Agent/Health/Vulnerabilities room IDs are required.
+  no_log: true
+
+- name: Build the agent target map from inventory
+  ansible.builtin.command:
+    argv: [uv, run, --with, pyyaml, python, scripts/build_security_config.py, --output, /tmp/homelab-security-config]
+    chdir: "{{ playbook_dir }}/../.."
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Include directly managed and proxied guest targets
+  ansible.builtin.set_fact:
+    homelab_agent_targets_config: "{{ lookup('file', '/tmp/homelab-security-config/agent-targets.json') | from_json }}"
+
+- name: Create the agent configuration directory
+  ansible.builtin.file:
+    path: /etc/homelab-agent
+    state: directory
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0750'
+
+- name: Install the agent credentials and target map
+  ansible.builtin.copy:
+    content: "{{ item.content }}\n"
+    dest: "/etc/homelab-agent/{{ item.name }}"
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0640'
+  loop:
+    - name: matrix-access-token
+      content: "{{ homelab_agent_matrix_access_token }}"
+    - name: matrix-room-agent
+      content: "{{ homelab_agent_matrix_room }}"
+    - name: matrix-room-health
+      content: "{{ homelab_agent_matrix_health_room }}"
+    - name: matrix-room-vulnerabilities
+      content: "{{ homelab_agent_matrix_vulnerabilities_room }}"
+    - name: targets.json
+      content: "{{ homelab_agent_targets_config | to_json }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  notify: Restart homelab agent
+
+- name: Discover declared deployment defaults on the controller
+  ansible.builtin.find:
+    paths: "{{ playbook_dir }}/../roles"
+    recurse: true
+    file_type: file
+    patterns: main.yml
+  delegate_to: localhost
+  become: false
+  register: homelab_agent_repository_defaults
+
+- name: Discover application manifests on the controller
+  ansible.builtin.find:
+    paths: "{{ playbook_dir }}/../../apps"
+    recurse: true
+    file_type: file
+    patterns: '*.yml'
+  delegate_to: localhost
+  become: false
+  register: homelab_agent_application_manifests
+
+- name: Discover canonical inventory on the controller
+  ansible.builtin.find:
+    paths: "{{ playbook_dir }}/../../inventory"
+    recurse: false
+    file_type: file
+    patterns:
+      - '*.yml'
+      - '*.yaml'
+  delegate_to: localhost
+  become: false
+  register: homelab_agent_canonical_inventory
+
+- name: Select trusted deployment context files
+  ansible.builtin.set_fact:
+    homelab_agent_repository_context_files: >-
+      {{
+        homelab_agent_repository_defaults.files
+        | map(attribute='path')
+        | select('search', '/defaults/main.yml$')
+        | list
+        + (homelab_agent_application_manifests.files | map(attribute='path') | list)
+        + (homelab_agent_canonical_inventory.files | map(attribute='path') | list)
+        + [playbook_dir + '/../inventory/hosts.yml']
+      }}
+
+- name: Install the trusted deployment context for agent analysis
+  ansible.builtin.copy:
+    content: |
+      {% for source in homelab_agent_repository_context_files | sort %}
+      # {{ source | regex_replace('^.*/ansible/', 'ansible/') }}
+      {{ lookup('ansible.builtin.file', source) }}
+      {% endfor %}
+    dest: /etc/homelab-agent/repository-context
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0640'
+  notify: Restart homelab agent
+
+- name: Install the local restricted-control client
+  ansible.builtin.copy:
+    src: homelab_agentctl.py
+    dest: /usr/local/bin/homelab-agentctl
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0750'
+  notify: Restart homelab agent
+
+- name: Install the Matrix agent and investigation modules
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ homelab_agent_runtime_dir }}/{{ item }}"
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0640'
+  loop:
+    - homelab_agent.py
+    - homelab_investigation.py
+    - homelab_cve_alert.py
+  notify: Restart homelab agent
+
+- name: Install the agent vulnerability domain context
+  ansible.builtin.copy:
+    src: CONTEXT.md
+    dest: "{{ homelab_agent_state_dir }}/CONTEXT.md"
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0440'
+  notify: Restart homelab agent
+
+- name: Install the ephemeral evidence MCP adapter
+  ansible.builtin.copy:
+    src: homelab_evidence_mcp.py
+    dest: "{{ homelab_agent_runtime_dir }}/homelab_evidence_mcp.py"
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0640'
+  notify: Restart homelab agent
+
+- name: Install the homelab agent service
+  ansible.builtin.template:
+    src: homelab-agent.service.j2
+    dest: /etc/systemd/system/homelab-agent.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: homelab_agent_service_unit
+  notify: Restart homelab agent
+
+- name: Reload systemd for the homelab agent
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: homelab_agent_service_unit.changed
+
+- name: Enable and start the homelab agent
+  ansible.builtin.systemd_service:
+    name: homelab-agent.service
+    enabled: true
+    state: started

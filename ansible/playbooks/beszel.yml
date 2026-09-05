@@ -1,0 +1,6 @@
+---
+- name: Configure the Beszel monitoring hub
+  hosts: remote_platform
+  become: true
+  roles:
+    - beszel_hub

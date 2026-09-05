@@ -1,0 +1,119 @@
+---
+- name: Compile the complete defensive target inventory
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Build target and coverage contracts
+      ansible.builtin.command:
+        argv: [uv, run, --with, pyyaml, python, scripts/build_security_config.py, --output, /tmp/homelab-security-config]
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+- name: Enroll the controller's own bounded evidence endpoint
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the existing controller public key
+      ansible.builtin.slurp:
+        src: /var/lib/homelab-agent/.ssh/id_ed25519.pub
+      register: defense_controller_key
+
+    - name: Install the controller endpoint
+      ansible.builtin.include_role:
+        name: homelab_agent_target
+      vars:
+        homelab_agent_public_key: "{{ defense_controller_key.content | b64decode | trim }}"
+
+- name: Update bounded defensive agent endpoints
+  hosts: homelab_agent_targets
+  become: true
+  gather_facts: false
+  vars:
+    homelab_agent_target_user: homelab-agent
+  tasks:
+    - name: Install the tested forced command and evidence gateway
+      ansible.builtin.copy:
+        src: "../roles/homelab_agent_target/files/{{ item.src }}"
+        dest: "/usr/local/libexec/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0755'
+        backup: true
+      loop:
+        - {src: homelab_agent_remote.py, dest: homelab-agent-remote}
+        - {src: homelab_evidence_gateway.py, dest: homelab-evidence-gateway}
+
+    - name: Install the external guest router
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_target/files/homelab_guest_agent.py
+        dest: /usr/local/libexec/homelab-guest-agent
+        mode: '0755'
+      when: inventory_hostname == 'proxmox'
+
+    - name: Authorize only the bounded endpoint programs and mapped restarts
+      ansible.builtin.template:
+        src: ../roles/homelab_agent_target/templates/sudoers.j2
+        dest: /etc/sudoers.d/homelab-agent
+        owner: root
+        group: root
+        mode: '0440'
+        validate: /usr/sbin/visudo -cf %s
+
+- name: Install bounded guest evidence endpoints through Proxmox
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install each guest endpoint
+      ansible.builtin.include_tasks: tasks/defense-external-endpoint.yml
+      loop:
+        - {id: 112, name: next-plaid, config_roots: [/etc/systemd/system]}
+        - {id: 113, name: firecrawl, config_roots: [/opt/firecrawl, /etc/systemd/system]}
+        - {id: 115, name: eu-law-db, config_roots: [/etc/postgresql, /etc/systemd/system]}
+      loop_control:
+        loop_var: defense_guest
+
+- name: Update controller coverage and defensive action tools
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install all 15 bounded agent targets
+      ansible.builtin.copy:
+        src: /tmp/homelab-security-config/agent-targets.json
+        dest: /etc/homelab-agent/targets.json
+        owner: root
+        group: homelab-agent
+        mode: '0640'
+    - name: Install the validated fleet client
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_service/files/homelab_agentctl.py
+        dest: /usr/local/bin/homelab-agentctl
+        owner: root
+        group: root
+        mode: '0755'
+        backup: true
+
+    - name: Install agent tool definitions and coverage guidance
+      ansible.builtin.copy:
+        src: "../roles/homelab_agent_service/files/{{ item }}"
+        dest: "/opt/homelab-agent/{{ item }}"
+        owner: root
+        group: homelab-agent
+        mode: '0640'
+        backup: true
+      loop: [homelab_evidence_mcp.py]
+
+    - name: Install current defensive guidance
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_service/files/CONTEXT.md
+        dest: /var/lib/homelab-agent/CONTEXT.md
+        owner: root
+        group: homelab-agent
+        mode: '0440'
+
+    - name: Restart the controller with the updated tool definitions
+      ansible.builtin.systemd_service:
+        name: homelab-agent.service
+        state: restarted

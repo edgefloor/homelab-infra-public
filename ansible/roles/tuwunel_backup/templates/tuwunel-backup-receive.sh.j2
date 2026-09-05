@@ -1,0 +1,36 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+backup_dir={{ tuwunel_backup_receiver_dir | quote }}
+config_dir={{ tuwunel_backup_receiver_config_dir | quote }}
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+partial="$backup_dir/.tuwunel-$stamp.tar.zst.age.partial"
+final="$backup_dir/tuwunel-$stamp.tar.zst.age"
+
+cleanup() {
+  rm -f "$partial"
+}
+trap cleanup EXIT HUP INT TERM
+
+ssh -T \
+  -i "$config_dir/id_ed25519" \
+  -o BatchMode=yes \
+  -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$config_dir/known_hosts" \
+  {{ tuwunel_backup_source_user | quote }}@{{ tuwunel_backup_source_host | quote }} \
+  | age --encrypt \
+      -R "$config_dir/age-recipient.txt" \
+      -o "$partial"
+
+test -s "$partial"
+age --decrypt -i "$config_dir/age-identity.txt" "$partial" | zstd --test --quiet
+mv "$partial" "$final"
+
+find "$backup_dir" -maxdepth 1 -type f -name 'tuwunel-*.tar.zst.age' \
+  -printf '%T@ %p\n' \
+  | sort -nr \
+  | tail -n +{{ tuwunel_backup_keep + 1 }} \
+  | cut -d' ' -f2- \
+  | xargs -r rm -f --

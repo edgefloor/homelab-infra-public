@@ -1,0 +1,10 @@
+---
+- name: Configure internal DNS and network operations
+  hosts: network_ops
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  roles:
+    - common_baseline
+    - coredns
+    - cloudflare_ddns

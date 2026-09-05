@@ -1,0 +1,20 @@
+---
+matrix_rtc_install_dir: /opt/matrix-rtc
+matrix_rtc_credentials_dir: /etc/matrix-rtc
+matrix_rtc_hostname: matrix-rtc.homelab.example
+matrix_rtc_public_ip: 198.51.100.24
+matrix_rtc_proxy_gateway: 172.30.0.1
+matrix_rtc_livekit_version: 1.13.5
+matrix_rtc_livekit_image: docker.io/livekit/livekit-server:v1.13.5@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1
+matrix_rtc_jwt_version: 0.4.4
+matrix_rtc_jwt_image: ghcr.io/element-hq/lk-jwt-service:0.4.4@sha256:9c715697c6f7c1f538f2ee41b7b59b04a8d06bf790a7cc8c8517ccac8d28813d
+matrix_rtc_livekit_port: 7880
+matrix_rtc_tcp_port: 7881
+matrix_rtc_udp_port: 7882
+matrix_rtc_jwt_port: 8081
+matrix_rtc_turn_udp_port: 3478
+matrix_rtc_turn_tls_port: 5349
+matrix_rtc_turn_tls_backend_port: 5350
+matrix_rtc_turn_relay_start: 50300
+matrix_rtc_turn_relay_end: 50400
+matrix_rtc_full_access_homeservers: matrix.homelab.example

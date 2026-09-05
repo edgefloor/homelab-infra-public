@@ -1,0 +1,20 @@
+---
+schema_version: 1
+id: sonarr
+name: Sonarr
+upstream:
+  repository: https://github.com/Sonarr/Sonarr
+  release: v4.0.19.2979
+  commit: 4ff1b780010d3d9ec76a4864dce96b6494e9caea
+  distribution: official_binary
+runtime: native_systemd
+environments:
+  staging: { target: media-automation, status: migrated_and_validated }
+  production: { target: media-automation, status: active_lan_via_caddy_remote_via_pangolin }
+routing: { caddy: lan, pangolin: remote }
+health:
+  local_url: http://127.0.0.1:8989/ping
+  expected_units: [sonarr.service]
+state:
+  paths: [/var/lib/sonarr, /storage/Series]
+  backup_required_before_cutover: true

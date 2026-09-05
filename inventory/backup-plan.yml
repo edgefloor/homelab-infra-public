@@ -1,0 +1,40 @@
+---
+backup_plan:
+  zfs_dataset: data/backups
+  mount_path: /data/backups
+  proxmox_storage_id: data-backup
+  storage_content: [backup]
+  scheduled_jobs:
+    - id: managed-weekly
+      status: active
+      node: node1
+      lxc_ids: [200, 202, 203, 204, 205, 206, 207, 210, 211, 213]
+      schedule: 'sun 03:00'
+      mode: snapshot
+      compression: zstd
+      retention: keep-last=2
+      repeat_missed: true
+      bind_mounted_replaceable_data: excluded
+    - id: tuwunel-vps-weekly
+      status: active
+      source: 198.51.100.24
+      destination: /var/lib/tuwunel-backups on LXC 200
+      schedule: 'sun 00:30 UTC'
+      method: brief_offline_zstd_stream_over_forced_ssh_then_age_encryption
+      retention: keep-last=4
+      included_state: [tuwunel_database_and_media, tuwunel_config, matrix_rtc_config, matrix_alert_bridge, update_monitor_state]
+      destination_backup: included_in_managed-weekly_lxc_200_snapshot
+  last_verified_run:
+    observed_at: '2026-09-05T16:10:00+02:00'
+    result: successful
+    archive_integrity: tuwunel_encrypted_home_copy_decrypted_and_passed_zstd_test
+  restore_tests:
+    lxc: pending
+    application_aware: pending
+  storage:
+    observed_at: '2026-09-05T16:33:00+02:00'
+    local_lvm_data_percent: 33.18
+    local_lvm_metadata_percent: 1.57
+    volume_group_free_gib: 16
+    thin_pool_autoextend_threshold_percent: 100
+    action: choose_safe_autoextend_policy_before_capacity_is_tight

@@ -1,0 +1,10 @@
+---
+- name: Configure the Caddy edge
+  hosts: caddy_staging
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  roles:
+    - common_baseline
+    - caddy
+    - crowdsec_home

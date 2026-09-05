@@ -1,0 +1,19 @@
+[Unit]
+Description=Miniflux MCP Server
+After=network-online.target miniflux.service
+Wants=network-online.target
+Requires=miniflux.service
+
+[Service]
+Type=simple
+User=miniflux-mcp
+Group=miniflux-mcp
+EnvironmentFile=/etc/miniflux-mcp.env
+ExecStart=/usr/local/bin/miniflux-mcp
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,45 @@
+services:
+  server:
+    networks:
+      private: {}
+      proxy:
+        ipv4_address: {{ nerocd_server_proxy_address }}
+
+  edge:
+    image: "{{ nerocd_edge_image }}"
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /config
+      - /data
+      - /tmp
+    volumes:
+      - "{{ nerocd_runtime_dir }}/Caddyfile:/etc/caddy/Caddyfile:ro"
+    ports:
+      - "{{ nerocd_listen_address }}:{{ nerocd_listen_port }}:8080"
+    networks:
+      proxy:
+        ipv4_address: {{ nerocd_edge_proxy_address }}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    logging:
+      driver: local
+      options: {max-size: 5m, max-file: "3"}
+
+networks:
+  proxy:
+    external: true
+    name: "{{ nerocd_proxy_network }}"

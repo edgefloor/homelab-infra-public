@@ -1,0 +1,20 @@
+---
+schema_version: 1
+id: radarr
+name: Radarr
+upstream:
+  repository: https://github.com/Radarr/Radarr
+  release: v6.3.0.10514
+  commit: 7827e5368947f158ad06f757334f5cde6c406411
+  distribution: official_binary
+runtime: native_systemd
+environments:
+  staging: { target: media-automation, status: migrated_and_validated }
+  production: { target: media-automation, status: active_lan_via_caddy_remote_via_pangolin }
+routing: { caddy: lan, pangolin: remote }
+health:
+  local_url: http://127.0.0.1:7878/ping
+  expected_units: [radarr.service]
+state:
+  paths: [/var/lib/radarr, /storage/Movies]
+  backup_required_before_cutover: true

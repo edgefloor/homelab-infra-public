@@ -1,0 +1,384 @@
+---
+- name: Install repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - git
+      - gnupg
+      - unzip
+    state: present
+
+- name: Download the PostgreSQL repository key
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /usr/share/keyrings/postgresql.asc
+    checksum: "sha256:{{ postgresql_repository_key_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the PostgreSQL repository keyring
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --dearmor
+      - --output
+      - /usr/share/keyrings/postgresql.gpg
+      - /usr/share/keyrings/postgresql.asc
+  args:
+    creates: /usr/share/keyrings/postgresql.gpg
+
+- name: Configure the official PostgreSQL repository
+  ansible.builtin.copy:
+    content: |
+      Types: deb
+      URIs: https://apt.postgresql.org/pub/repos/apt
+      Suites: trixie-pgdg
+      Components: main
+      Signed-By: /usr/share/keyrings/postgresql.gpg
+    dest: /etc/apt/sources.list.d/pgdg.sources
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Pin PostgreSQL 17
+  ansible.builtin.copy:
+    content: |
+      Package: postgresql-17
+      Pin: version {{ postgresql_version }}
+      Pin-Priority: 1001
+    dest: /etc/apt/preferences.d/postgresql-17
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install pinned PostgreSQL 17
+  ansible.builtin.apt:
+    name: "postgresql-17={{ postgresql_version }}"
+    state: present
+    update_cache: true
+    allow_downgrade: true
+    policy_rc_d: 101
+
+- name: Enable and start PostgreSQL
+  ansible.builtin.systemd_service:
+    name: postgresql.service
+    enabled: true
+    state: started
+
+- name: Create the application artifact cache
+  ansible.builtin.file:
+    path: /var/cache/homelab-tools
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download the official Miniflux package
+  ansible.builtin.get_url:
+    url: "{{ miniflux_deb_url }}"
+    dest: "/var/cache/homelab-tools/miniflux-{{ miniflux_version }}-amd64.deb"
+    checksum: "sha256:{{ miniflux_deb_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the official Miniflux package
+  ansible.builtin.apt:
+    deb: "/var/cache/homelab-tools/miniflux-{{ miniflux_version }}-amd64.deb"
+    state: present
+    policy_rc_d: 101
+  register: miniflux_package
+
+- name: Create the Miniflux MCP group
+  ansible.builtin.group:
+    name: miniflux-mcp
+    system: true
+
+- name: Create the Miniflux MCP user
+  ansible.builtin.user:
+    name: miniflux-mcp
+    group: miniflux-mcp
+    home: /var/lib/miniflux-mcp
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: true
+
+- name: Create Miniflux MCP build and release directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /opt/go
+    - "/opt/go/{{ go_version }}"
+    - /opt/miniflux-mcp
+    - /opt/miniflux-mcp/source
+    - /opt/miniflux-mcp/releases
+    - "/opt/miniflux-mcp/releases/{{ miniflux_mcp_version }}"
+    - /opt/miniflux-mcp/retained
+    - /opt/tunnel-client
+    - /opt/tunnel-client/releases
+    - "/opt/tunnel-client/releases/{{ tunnel_client_version }}"
+
+- name: Retain the migrated development MCP binary
+  ansible.builtin.copy:
+    src: /usr/local/bin/miniflux-mcp
+    dest: /opt/miniflux-mcp/retained/miniflux-mcp-migrated-dev
+    remote_src: true
+    force: false
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download the pinned Go toolchain
+  ansible.builtin.get_url:
+    url: "https://go.dev/dl/go{{ go_version }}.linux-amd64.tar.gz"
+    dest: "/var/cache/homelab-tools/go{{ go_version }}.linux-amd64.tar.gz"
+    checksum: "sha256:{{ go_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned Go toolchain
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/go{{ go_version }}.linux-amd64.tar.gz"
+    dest: "/opt/go/{{ go_version }}"
+    remote_src: true
+    creates: "/opt/go/{{ go_version }}/go/bin/go"
+
+- name: Check out the official Miniflux MCP release
+  ansible.builtin.git:
+    repo: https://github.com/tssujt/miniflux-mcp.git
+    dest: /opt/miniflux-mcp/source
+    version: "{{ miniflux_mcp_commit }}"
+    force: true
+
+- name: Build the pinned Miniflux MCP release
+  ansible.builtin.command:
+    argv:
+      - "/opt/go/{{ go_version }}/go/bin/go"
+      - build
+      - -trimpath
+      - -buildvcs=false
+      - -ldflags
+      - "-X main.Version={{ miniflux_mcp_version }} -X main.Revision={{ miniflux_mcp_commit[0:12] }} -X main.BuildDate={{ miniflux_mcp_build_date }}"
+      - -o
+      - "/opt/miniflux-mcp/releases/{{ miniflux_mcp_version }}/miniflux-mcp"
+      - .
+    chdir: /opt/miniflux-mcp/source
+    creates: "/opt/miniflux-mcp/releases/{{ miniflux_mcp_version }}/miniflux-mcp"
+  register: miniflux_mcp_build
+
+- name: Link the active Miniflux MCP binary
+  ansible.builtin.file:
+    src: "/opt/miniflux-mcp/releases/{{ miniflux_mcp_version }}/miniflux-mcp"
+    dest: /usr/local/bin/miniflux-mcp
+    state: link
+    force: true
+  register: miniflux_mcp_link
+
+- name: Verify the Miniflux MCP build
+  ansible.builtin.stat:
+    path: "/opt/miniflux-mcp/releases/{{ miniflux_mcp_version }}/miniflux-mcp"
+    checksum_algorithm: sha256
+  register: miniflux_mcp_artifact
+  failed_when: >-
+    not miniflux_mcp_artifact.stat.exists or
+    miniflux_mcp_artifact.stat.checksum != miniflux_mcp_binary_sha256
+
+- name: Download the pinned OpenAI tunnel client
+  ansible.builtin.get_url:
+    url: "{{ tunnel_client_archive_url }}"
+    dest: "/var/cache/homelab-tools/tunnel-client-{{ tunnel_client_version }}-linux-amd64.zip"
+    checksum: "sha256:{{ tunnel_client_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned OpenAI tunnel client
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/tunnel-client-{{ tunnel_client_version }}-linux-amd64.zip"
+    dest: "/opt/tunnel-client/releases/{{ tunnel_client_version }}"
+    remote_src: true
+    creates: "/opt/tunnel-client/releases/{{ tunnel_client_version }}/tunnel-client"
+  register: tunnel_client_extract
+
+- name: Link the active OpenAI tunnel client
+  ansible.builtin.file:
+    src: "/opt/tunnel-client/releases/{{ tunnel_client_version }}/tunnel-client"
+    dest: /usr/local/bin/tunnel-client
+    state: link
+    force: true
+  register: tunnel_client_link
+
+- name: Verify the OpenAI tunnel client artifact
+  ansible.builtin.stat:
+    path: /usr/local/bin/tunnel-client
+    checksum_algorithm: sha256
+    follow: true
+  register: tunnel_client_artifact
+  failed_when: >-
+    not tunnel_client_artifact.stat.exists or
+    tunnel_client_artifact.stat.checksum != tunnel_client_binary_sha256
+
+- name: Record the active OpenAI tunnel client artifact
+  ansible.builtin.copy:
+    content: "{{ tunnel_client_binary_sha256 }}\n"
+    dest: /opt/tunnel-client/active.sha256
+    owner: root
+    group: root
+    mode: '0644'
+  register: tunnel_client_active_stamp
+
+- name: Protect application and tunnel configuration
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/miniflux.conf, mode: '0600' }
+    - { path: /etc/miniflux-mcp.env, mode: '0600' }
+    - { path: /etc/tunnel-client.env, mode: '0600' }
+    - { path: /root/.config, mode: '0700' }
+    - { path: /root/.config/tunnel-client, mode: '0700' }
+    - { path: /root/.config/tunnel-client/miniflux.yaml, mode: '0600' }
+
+- name: Configure Miniflux trusted proxy authentication
+  ansible.builtin.lineinfile:
+    path: /etc/miniflux.conf
+    regexp: "^{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+    owner: root
+    group: root
+    mode: '0600'
+    backup: true
+  loop:
+    - key: AUTH_PROXY_HEADER
+      value: "{{ miniflux_auth_proxy_header }}"
+    - key: AUTH_PROXY_USER_CREATION
+      value: "{{ miniflux_auth_proxy_user_creation | bool | ternary('1', '0') }}"
+    - key: TRUSTED_REVERSE_PROXY_NETWORKS
+      value: "{{ miniflux_trusted_reverse_proxy_networks | join(',') }}"
+  register: miniflux_auth_proxy_config
+
+- name: Stop Miniflux before a package database migration
+  ansible.builtin.systemd_service:
+    name: miniflux.service
+    state: stopped
+  when: miniflux_package.changed
+
+- name: Run Miniflux database migrations for the installed package
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - --quiet
+      - --wait
+      - --pipe
+      - --collect
+      - --unit=miniflux-schema-migration
+      - --uid=miniflux
+      - --property=EnvironmentFile=/etc/miniflux.conf
+      - /usr/bin/miniflux
+      - -migrate
+  changed_when: true
+  when: miniflux_package.changed
+
+- name: Install the Miniflux MCP service
+  ansible.builtin.template:
+    src: miniflux-mcp.service.j2
+    dest: /etc/systemd/system/miniflux-mcp.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: miniflux_mcp_unit
+
+- name: Install the OpenAI tunnel service
+  ansible.builtin.template:
+    src: tunnel-client.service.j2
+    dest: /etc/systemd/system/tunnel-client.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: tunnel_client_unit
+
+- name: Reload systemd for integration services
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: miniflux_mcp_unit.changed or tunnel_client_unit.changed
+
+- name: Apply requested Miniflux service state
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: "{{ miniflux_start_services }}"
+    state: "{{ 'started' if miniflux_start_services else 'stopped' }}"
+  loop:
+    - miniflux.service
+    - miniflux-mcp.service
+    - tunnel-client.service
+
+- name: Restart Miniflux after authentication configuration changes
+  ansible.builtin.systemd_service:
+    name: miniflux.service
+    state: restarted
+  when:
+    - miniflux_start_services
+    - miniflux_auth_proxy_config.changed
+
+- name: Restart the integration stack after an MCP binary change
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - miniflux-mcp.service
+    - tunnel-client.service
+  when:
+    - miniflux_start_services
+    - miniflux_mcp_build.changed or miniflux_mcp_link.changed
+
+- name: Restart the OpenAI tunnel after a client binary change
+  ansible.builtin.systemd_service:
+    name: tunnel-client.service
+    state: restarted
+  when:
+    - miniflux_start_services
+    - >-
+      tunnel_client_extract.changed or
+      tunnel_client_link.changed or
+      tunnel_client_active_stamp.changed
+
+- name: Read installed Miniflux version
+  ansible.builtin.command:
+    argv: [/usr/bin/miniflux, -version]
+  register: miniflux_installed_version
+  changed_when: false
+  failed_when: miniflux_installed_version.stdout != miniflux_version
+
+- name: Read installed PostgreSQL version
+  ansible.builtin.command:
+    argv: [dpkg-query, -W, "-f=${Version}", postgresql-17]
+  register: postgresql_installed_version
+  changed_when: false
+  failed_when: postgresql_installed_version.stdout != postgresql_version
+
+- name: Check Miniflux interface
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ miniflux_port }}/"
+    status_code: 200
+  when: miniflux_start_services
+
+- name: Check Miniflux MCP health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ miniflux_mcp_port }}/healthz"
+    status_code: 200
+  when: miniflux_start_services
+
+- name: Check OpenAI tunnel health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ tunnel_health_port }}/"
+    status_code: 200
+  when: miniflux_start_services

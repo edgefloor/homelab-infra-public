@@ -1,0 +1,74 @@
+api:
+  insecure: true
+  dashboard: true
+
+providers:
+  http:
+    endpoint: http://pangolin:3001/api/v1/traefik-config
+    pollInterval: 5s
+  file:
+    filename: /etc/traefik/dynamic_config.yml
+
+experimental:
+  plugins:
+    badger:
+      moduleName: github.com/fosrl/badger
+      version: "{{ badger_version }}"
+    crowdsec:
+      moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+      version: "{{ crowdsec_traefik_plugin_version }}"
+
+log:
+  level: INFO
+  format: common
+  maxSize: 100
+  maxBackups: 3
+  maxAge: 3
+  compress: true
+
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
+  bufferingSize: 100
+  fields:
+    headers:
+      defaultMode: drop
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      httpChallenge:
+        entryPoint: web
+      email: "{{ pangolin_letsencrypt_email }}"
+      storage: /letsencrypt/acme.json
+      caServer: https://acme-v02.api.letsencrypt.org/directory
+
+entryPoints:
+  web:
+    address: :80
+    http:
+      middlewares:
+        - crowdsec@file
+  websecure:
+    address: :443
+    transport:
+      respondingTimeouts:
+        readTimeout: 30m
+    http3:
+      advertisedPort: 443
+    http:
+      middlewares:
+        - crowdsec@file
+      tls:
+        certResolver: letsencrypt
+      encodedCharacters:
+        allowEncodedSlash: true
+        allowEncodedQuestionMark: true
+  turntls:
+    address: :{{ matrix_rtc_turn_tls_port }}
+
+serversTransport:
+  insecureSkipVerify: true
+
+ping:
+  entryPoint: web

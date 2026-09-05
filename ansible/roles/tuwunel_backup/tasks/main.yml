@@ -1,0 +1,195 @@
+---
+- name: Prepare the home backup receiver
+  when: tuwunel_backup_mode == 'receiver_prepare'
+  block:
+    - name: Install backup receiver dependencies
+      ansible.builtin.apt:
+        name:
+          - openssh-client
+          - zstd
+        state: present
+        update_cache: false
+
+    - name: Create the Tuwunel backup receiver directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ tuwunel_backup_receiver_config_dir }}", mode: '0700' }
+        - { path: "{{ tuwunel_backup_receiver_dir }}", mode: '0700' }
+
+    - name: Generate the dedicated backup transport key
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -q -t ed25519 -N ''
+          -C tuwunel-backup@plan-runner
+          -f {{ tuwunel_backup_receiver_config_dir }}/id_ed25519
+        creates: "{{ tuwunel_backup_receiver_config_dir }}/id_ed25519"
+
+    - name: Generate the backup encryption identity
+      ansible.builtin.command:
+        cmd: >-
+          age-keygen -o {{ tuwunel_backup_receiver_config_dir }}/age-identity.txt
+        creates: "{{ tuwunel_backup_receiver_config_dir }}/age-identity.txt"
+
+    - name: Derive the backup encryption recipient
+      ansible.builtin.command:
+        cmd: >-
+          age-keygen -y {{ tuwunel_backup_receiver_config_dir }}/age-identity.txt
+      register: tuwunel_backup_age_recipient
+      changed_when: false
+
+    - name: Store the backup encryption recipient
+      ansible.builtin.copy:
+        content: "{{ tuwunel_backup_age_recipient.stdout }}\n"
+        dest: "{{ tuwunel_backup_receiver_config_dir }}/age-recipient.txt"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Read the dedicated backup transport public key
+      ansible.builtin.slurp:
+        src: "{{ tuwunel_backup_receiver_config_dir }}/id_ed25519.pub"
+      register: tuwunel_backup_public_key_file
+
+    - name: Publish the backup transport public key
+      ansible.builtin.set_fact:
+        tuwunel_backup_receiver_public_key: >-
+          {{ tuwunel_backup_public_key_file.content | b64decode | trim }}
+
+- name: Configure the bounded backup source
+  when: tuwunel_backup_mode == 'source'
+  block:
+    - name: Require the receiver public key
+      ansible.builtin.assert:
+        that:
+          - tuwunel_backup_receiver_public_key | length > 40
+        fail_msg: The dedicated Tuwunel backup receiver public key is required.
+
+    - name: Install the Tuwunel backup export command
+      ansible.builtin.template:
+        src: tuwunel-backup-export.sh.j2
+        dest: /usr/local/sbin/tuwunel-backup-export
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Create the root SSH directory
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Ensure the root authorized-key file exists
+      ansible.builtin.file:
+        path: /root/.ssh/authorized_keys
+        state: touch
+        owner: root
+        group: root
+        mode: '0600'
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Authorize only the backup export command
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        regexp: 'tuwunel-backup@plan-runner$'
+        line: >-
+          restrict,command="/usr/local/sbin/tuwunel-backup-export"
+          {{ tuwunel_backup_receiver_public_key }}
+
+    - name: Read the VPS SSH host public key
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: tuwunel_backup_ssh_host_key
+
+    - name: Publish the VPS SSH host public key
+      ansible.builtin.set_fact:
+        tuwunel_backup_source_host_key: >-
+          {{ tuwunel_backup_ssh_host_key.content | b64decode | trim }}
+
+- name: Install the encrypted backup receiver
+  when: tuwunel_backup_mode == 'receiver_install'
+  block:
+    - name: Require the VPS SSH host key
+      ansible.builtin.assert:
+        that:
+          - tuwunel_backup_source_host_key is match('^ssh-ed25519 ')
+        fail_msg: The VPS ED25519 host key is required for strict host verification.
+
+    - name: Pin the VPS SSH host key
+      ansible.builtin.copy:
+        content: >-
+          {{ tuwunel_backup_source_host }} {{ tuwunel_backup_source_host_key }}
+        dest: "{{ tuwunel_backup_receiver_config_dir }}/known_hosts"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Install the encrypted Tuwunel backup receiver
+      ansible.builtin.template:
+        src: tuwunel-backup-receive.sh.j2
+        dest: /usr/local/sbin/tuwunel-backup-receive
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Install the Tuwunel backup service
+      ansible.builtin.template:
+        src: tuwunel-backup.service.j2
+        dest: /etc/systemd/system/tuwunel-backup.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: tuwunel_backup_service
+
+    - name: Install the Tuwunel backup timer
+      ansible.builtin.template:
+        src: tuwunel-backup.timer.j2
+        dest: /etc/systemd/system/tuwunel-backup.timer
+        owner: root
+        group: root
+        mode: '0644'
+      register: tuwunel_backup_timer
+
+    - name: Reload systemd for Tuwunel backup units
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: tuwunel_backup_service.changed or tuwunel_backup_timer.changed
+
+    - name: Enable the Tuwunel backup timer
+      ansible.builtin.systemd:
+        name: tuwunel-backup.timer
+        enabled: true
+        state: started
+
+    - name: Find existing encrypted Tuwunel backups
+      ansible.builtin.find:
+        paths: "{{ tuwunel_backup_receiver_dir }}"
+        patterns: 'tuwunel-*.tar.zst.age'
+        file_type: file
+      register: tuwunel_backup_archives
+
+    - name: Create the initial encrypted backup
+      ansible.builtin.systemd:
+        name: tuwunel-backup.service
+        state: started
+      when: tuwunel_backup_archives.matched == 0
+
+    - name: Inspect the newest encrypted backup
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          newest=$(find {{ tuwunel_backup_receiver_dir }} -maxdepth 1
+          -type f -name 'tuwunel-*.tar.zst.age' -print | sort | tail -1);
+          test -n "$newest";
+          age --decrypt
+          -i {{ tuwunel_backup_receiver_config_dir }}/age-identity.txt "$newest"
+          | zstd --test --quiet
+        executable: /bin/bash
+      changed_when: false

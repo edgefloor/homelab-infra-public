@@ -1,0 +1,7 @@
+---
+- name: Configure the Pocket ID target
+  hosts: pocket_id_servers
+  become: true
+  roles:
+    - common_baseline
+    - pocket_id

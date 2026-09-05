@@ -1,0 +1,146 @@
+http:
+  middlewares:
+    badger:
+      plugin:
+        badger:
+          disableForwardAuth: true
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+    crowdsec:
+      plugin:
+        crowdsec:
+          enabled: true
+          logLevel: INFO
+          crowdsecMode: stream
+          crowdsecLapiScheme: http
+          crowdsecLapiHost: crowdsec:8080
+          crowdsecLapiKeyFile: /run/secrets/crowdsec_traefik_key
+          crowdsecAppsecEnabled: false
+          updateIntervalSeconds: 60
+          updateMaxFailure: -1
+          streamStartupBlock: false
+          clientTrustedIPs:
+{% for range in crowdsec_trusted_ranges %}
+            - {{ range }}
+{% endfor %}
+
+  routers:
+    main-app-router-redirect:
+      rule: "Host(`{{ pangolin_dashboard_domain }}`)"
+      service: next-service
+      entryPoints: [web]
+      middlewares: [redirect-to-https, badger]
+
+    next-router:
+      rule: "Host(`{{ pangolin_dashboard_domain }}`) && !PathPrefix(`/api/v1`)"
+      service: next-service
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+    api-router:
+      rule: "Host(`{{ pangolin_dashboard_domain }}`) && PathPrefix(`/api/v1`)"
+      service: api-service
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+    ws-router:
+      rule: "Host(`{{ pangolin_dashboard_domain }}`)"
+      service: api-service
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+    matrix-router-redirect:
+      rule: "Host(`{{ matrix_server_domain }}`)"
+      service: matrix-service
+      entryPoints: [web]
+      middlewares: [redirect-to-https]
+
+    matrix-webhook-router:
+      rule: "Host(`{{ matrix_server_domain }}`) && PathPrefix(`/_crowdsec/webhook`)"
+      service: matrix-bridge-service
+      entryPoints: [websecure]
+      priority: 200
+      tls:
+        certResolver: letsencrypt
+
+    matrix-router:
+      rule: "Host(`{{ matrix_server_domain }}`)"
+      service: matrix-service
+      entryPoints: [websecure]
+      tls:
+        certResolver: letsencrypt
+
+    matrix-rtc-router-redirect:
+      rule: "Host(`{{ matrix_rtc_domain }}`)"
+      service: matrix-rtc-livekit-service
+      entryPoints: [web]
+      middlewares: [redirect-to-https]
+
+    matrix-rtc-jwt-router:
+      rule: "Host(`{{ matrix_rtc_domain }}`) && (PathPrefix(`/sfu/get`) || PathPrefix(`/healthz`) || PathPrefix(`/get_token`))"
+      service: matrix-rtc-jwt-service
+      entryPoints: [websecure]
+      priority: 200
+      tls:
+        certResolver: letsencrypt
+
+    matrix-rtc-livekit-router:
+      rule: "Host(`{{ matrix_rtc_domain }}`)"
+      service: matrix-rtc-livekit-service
+      entryPoints: [websecure]
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    next-service:
+      loadBalancer:
+        servers:
+          - url: http://pangolin:3002
+    api-service:
+      loadBalancer:
+        servers:
+          - url: http://pangolin:3000
+    matrix-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:{{ matrix_tuwunel_port }}
+    matrix-bridge-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:{{ matrix_bridge_port }}
+    matrix-rtc-jwt-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:{{ matrix_rtc_jwt_port }}
+    matrix-rtc-livekit-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:{{ matrix_rtc_livekit_port }}
+
+tcp:
+  serversTransports:
+    pp-transport-v1:
+      proxyProtocol:
+        version: 1
+    pp-transport-v2:
+      proxyProtocol:
+        version: 2
+  routers:
+    matrix-turn-tls-router:
+      rule: "HostSNI(`{{ matrix_rtc_domain }}`)"
+      entryPoints: [turntls]
+      service: matrix-turn-tls-service
+      tls:
+        certResolver: letsencrypt
+  services:
+    matrix-turn-tls-service:
+      loadBalancer:
+        servers:
+          - address: {{ pangolin_docker_host_gateway }}:{{ matrix_rtc_turn_tls_backend_port }}

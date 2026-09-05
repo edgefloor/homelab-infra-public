@@ -1,0 +1,18 @@
+---
+crowdsec_version: 1.8.1
+crowdsec_firewall_bouncer_version: 0.0.36
+crowdsec_repository_distribution: bookworm
+crowdsec_repository_key_sha256: cd5729fe6f95d29efc48f1cfe63e0d4a3088506cf99f3cf74b572c4b70429980
+crowdsec_console_enrollment_key: "{{ lookup('ansible.builtin.env', 'CROWDSEC_CONSOLE_ENROLLMENT_KEY') }}"
+crowdsec_console_engine_name: home-caddy
+crowdsec_matrix_webhook_secret_file: /etc/crowdsec-matrix-webhook-secret
+crowdsec_matrix_webhook_url: https://matrix.homelab.example/_crowdsec/webhook
+crowdsec_home_collections:
+  - crowdsecurity/caddy
+  - crowdsecurity/linux
+crowdsec_home_trusted_ranges:
+  - 127.0.0.0/8
+  - ::1/128
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16

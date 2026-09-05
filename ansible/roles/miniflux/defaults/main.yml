@@ -1,0 +1,26 @@
+---
+miniflux_version: 2.3.3
+miniflux_deb_url: https://github.com/miniflux/v2/releases/download/2.3.3/miniflux_2.3.3_amd64.deb
+miniflux_deb_sha256: 14712f3852a7e6716676b9a827597febf098da9ae926b3ca82b594ad3d16e759
+miniflux_port: 8080
+miniflux_auth_proxy_header: X-Miniflux-User
+miniflux_auth_proxy_user_creation: true
+miniflux_trusted_reverse_proxy_networks:
+  - 10.42.0.202/32
+
+postgresql_version: 17.11-1.pgdg13+2
+postgresql_repository_key_sha256: 0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76
+
+miniflux_mcp_version: v0.6.0
+miniflux_mcp_commit: 435aff918ad8c6e9dd378d88d00b7427e933e5c9
+miniflux_mcp_build_date: '2026-09-05T01:04:26Z'
+miniflux_mcp_binary_sha256: 9fe17ed8c975e88b42d5175eb744218222e5ef3447bc7bbe0309f7d43a9d60a9
+miniflux_mcp_port: 8081
+go_version: 1.26.7
+go_archive_sha256: ffb5f8de10c62550dfddab66b36b57030721e0a44a3218e9e1181d7b59f121ca
+tunnel_client_version: v0.0.14
+tunnel_client_archive_url: https://github.com/openai/tunnel-client/releases/download/v0.0.14/tunnel-client-v0.0.14-linux-amd64.zip
+tunnel_client_archive_sha256: 15bd17e805cad39d412199115bb9e10a978dd35258a114cdf25dd2ae6681c7d3
+tunnel_client_binary_sha256: 472eb9dd9dd625b4e6023c3b4a5736b3a2e5a1b6dbe9338e001887a64ec992a6
+tunnel_health_port: 8082
+miniflux_start_services: true

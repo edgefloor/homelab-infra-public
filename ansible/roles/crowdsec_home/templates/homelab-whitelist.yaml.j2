@@ -1,0 +1,8 @@
+name: example/homelab-trusted
+description: Ignore localhost, private LAN, and internal infrastructure sources
+whitelist:
+  reason: trusted homelab infrastructure
+  cidr:
+{% for range in crowdsec_home_trusted_ranges %}
+    - {{ range }}
+{% endfor %}

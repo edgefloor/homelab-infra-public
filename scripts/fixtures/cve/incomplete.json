@@ -1,0 +1,144 @@
+{
+  "synthetic": true,
+  "record": {
+    "schema": 1,
+    "record_id": "0123456789abcdef",
+    "target": "example",
+    "event_id": "$synthetic",
+    "status": "complete",
+    "scope": {
+      "schema": 2,
+      "generated_at": "2099-01-01T00:00:00Z",
+      "truncated": false,
+      "groups": [
+        {
+          "id": "CVE-2099-1000",
+          "package": "example.org/handler",
+          "fixed": "2.1",
+          "occurrences": [
+            {
+              "artifact": "docker.io/example/service:2.0",
+              "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "artifact_type": "container_image",
+              "reported_file": "/usr/local/bin/service",
+              "containers": [
+                {
+                  "id": "0000000000000000000000000000000000000000000000000000000000000001",
+                  "name": "service-1"
+                }
+              ],
+              "deployed_path_ids": [
+                "p6aaa424093770310d5c96b74db72060a"
+              ]
+            }
+          ],
+          "group_id": "gce62f22d964568587b6c",
+          "path_ids": [
+            "p6aaa424093770310d5c96b74db72060a"
+          ],
+          "occurrence_count": 1
+        }
+      ],
+      "deployed_paths": [
+        {
+          "path_id": "p6aaa424093770310d5c96b74db72060a",
+          "display_label": "service-1",
+          "container": {
+            "id": "0000000000000000000000000000000000000000000000000000000000000001",
+            "name": "service-1"
+          },
+          "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "exact_artifact": "docker.io/example/service:2.0",
+          "occurrence_count": 1,
+          "reported_files": [
+            "/usr/local/bin/service"
+          ],
+          "packages": [
+            "example.org/handler"
+          ]
+        }
+      ],
+      "occurrence_count": 1,
+      "complete": true
+    },
+    "investigation": {
+      "groups": [
+        {
+          "group_id": "gce62f22d964568587b6c",
+          "mechanism": "A request must reach the optional handler to trigger the affected behavior.",
+          "mechanism_refs": [
+            "advisory-0"
+          ],
+          "paths": [
+            {
+              "path_id": "p6aaa424093770310d5c96b74db72060a",
+              "preconditions": [
+                {
+                  "condition": "The optional request handler must be enabled.",
+                  "state": "unresolved",
+                  "claim": "The running handler configuration could not be read.",
+                  "refs": [
+                    "runtime-0-0"
+                  ]
+                }
+              ],
+              "reachability": "unknown",
+              "decision": "insufficient_evidence",
+              "rationale": "The service configuration was unavailable, so the handler could not be assessed.",
+              "limitations": [
+                {
+                  "text": "The service configuration was unavailable, so the handler could not be assessed.",
+                  "refs": [
+                    "runtime-0-0"
+                  ]
+                }
+              ],
+              "patched_artifact": "unverified",
+              "patch_refs": [],
+              "next_check": null
+            }
+          ]
+        }
+      ]
+    },
+    "metrics": {},
+    "started_at": 4070908800
+  },
+  "receipts": [
+    {
+      "protocol": 2,
+      "observation_id": "advisory-0",
+      "timestamp": 4070908800,
+      "operation": "official_advisory",
+      "arguments": {
+        "advisory": "CVE-2099-1000"
+      },
+      "identity": {},
+      "status": "success",
+      "truncated": false,
+      "result": {
+        "mechanism": "A request reaches the optional handler."
+      }
+    },
+    {
+      "protocol": 2,
+      "observation_id": "runtime-0-0",
+      "timestamp": 4070908801,
+      "operation": "read_config",
+      "arguments": {
+        "container": "0000000000000000000000000000000000000000000000000000000000000001",
+        "path": "/etc/service/config.yml"
+      },
+      "identity": {
+        "container_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "artifact_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "status": "failed",
+      "truncated": false,
+      "result": {},
+      "limitations": [
+        "Configuration was unavailable."
+      ]
+    }
+  ]
+}

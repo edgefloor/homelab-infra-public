@@ -1,0 +1,120 @@
+---
+- name: Install the agent runtime dependencies
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - git
+      - openssh-client
+      - python3
+      - python3-venv
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the agent group
+  ansible.builtin.group:
+    name: "{{ homelab_agent_group }}"
+    system: true
+
+- name: Create the unprivileged agent account
+  ansible.builtin.user:
+    name: "{{ homelab_agent_user }}"
+    group: "{{ homelab_agent_group }}"
+    home: "{{ homelab_agent_state_dir }}"
+    create_home: false
+    shell: /bin/bash
+    system: true
+
+- name: Create the agent directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ homelab_agent_runtime_dir }}"
+      owner: root
+      group: "{{ homelab_agent_group }}"
+      mode: '0750'
+    - path: "{{ homelab_agent_state_dir }}"
+      owner: "{{ homelab_agent_user }}"
+      group: "{{ homelab_agent_group }}"
+      mode: '0750'
+    - path: "{{ homelab_agent_codex_home }}"
+      owner: "{{ homelab_agent_user }}"
+      group: "{{ homelab_agent_group }}"
+      mode: '0700'
+    - path: "{{ homelab_agent_ssh_key | dirname }}"
+      owner: "{{ homelab_agent_user }}"
+      group: "{{ homelab_agent_group }}"
+      mode: '0700'
+
+- name: Create the pinned Python environment
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - venv
+      - "{{ homelab_agent_runtime_dir }}/venv"
+  args:
+    creates: "{{ homelab_agent_runtime_dir }}/venv/bin/python"
+
+- name: Install the pinned Codex SDK and bundled runtime
+  ansible.builtin.pip:
+    name:
+      - "openai-codex=={{ homelab_agent_codex_version }}"
+      - "mcp=={{ homelab_agent_mcp_version }}"
+    virtualenv: "{{ homelab_agent_runtime_dir }}/venv"
+    virtualenv_command: "{{ homelab_agent_runtime_dir }}/venv/bin/python -m venv"
+
+- name: Allow the agent to execute the runtime without modifying it
+  ansible.builtin.file:
+    path: "{{ homelab_agent_runtime_dir }}"
+    state: directory
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0750'
+
+- name: Restore ownership of the virtual environment to root
+  ansible.builtin.file:
+    path: "{{ homelab_agent_runtime_dir }}/venv"
+    state: directory
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0750'
+
+- name: Install the Codex account wrapper
+  ansible.builtin.template:
+    src: homelab-codex.j2
+    dest: /usr/local/bin/homelab-codex
+    owner: root
+    group: "{{ homelab_agent_group }}"
+    mode: '0750'
+
+- name: Generate the restricted remote-control key
+  become_user: "{{ homelab_agent_user }}"
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -q
+      - -t
+      - ed25519
+      - -N
+      - ''
+      - -C
+      - homelab-agent@plan-runner
+      - -f
+      - "{{ homelab_agent_ssh_key }}"
+  args:
+    creates: "{{ homelab_agent_ssh_key }}"
+
+- name: Read the restricted remote-control public key
+  ansible.builtin.slurp:
+    src: "{{ homelab_agent_ssh_key }}.pub"
+  register: homelab_agent_public_key_file
+
+- name: Publish the restricted remote-control public key for target plays
+  ansible.builtin.set_fact:
+    homelab_agent_public_key: >-
+      {{ homelab_agent_public_key_file.content | b64decode | trim }}

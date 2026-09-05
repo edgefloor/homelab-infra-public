@@ -1,0 +1,33 @@
+---
+transmission_package_version: 4.1.3+dfsg-1~bpo13+1
+transmission_user: debian-transmission
+transmission_group: debian-transmission
+transmission_uid: 103
+transmission_gid: 112
+transmission_rpc_port: 9091
+transmission_peer_port: 51413
+transmission_rpc_authentication_required: false
+transmission_start_service: true
+transmission_router_safe_settings:
+  dht-enabled: false
+  pex-enabled: true
+  lpd-enabled: false
+  preferred_transports: [tcp]
+  port-forwarding-enabled: false
+  peer-limit-global: 80
+  peer-limit-per-torrent: 20
+  download-queue-enabled: true
+  download-queue-size: 3
+  queue-stalled-enabled: false
+  seed-queue-enabled: true
+  seed-queue-size: 5
+  upload-slots-per-torrent: 4
+transmission_router_removed_settings:
+  - preferred-transports
+
+filebrowser_version: 2.63.23
+filebrowser_archive_url: https://github.com/filebrowser/filebrowser/releases/download/v2.63.23/linux-amd64-filebrowser.tar.gz
+filebrowser_archive_sha256: b14db2bb8033caa3f80205eb6578b2ed0744ebd9e716b790bc4a9703ce909e88
+filebrowser_port: 8080
+filebrowser_database: /var/lib/filebrowser/filebrowser.db
+filebrowser_start_service: true

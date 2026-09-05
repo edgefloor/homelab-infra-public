@@ -1,0 +1,80 @@
+---
+- name: Prepare guest scanner directories
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ coverage_guest.id }}", --, install, -d, -m, '0700', /etc/homelab-update-monitor, /var/lib/homelab-update-monitor, /var/cache/homelab-update-monitor]
+  changed_when: false
+
+- name: Prepare guest executable directories
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ coverage_guest.id }}", --, install, -d, -m, '0755', /usr/local/libexec, /usr/local/bin]
+  changed_when: false
+
+- name: Stage guest coverage configuration
+  ansible.builtin.copy:
+    src: "{{ update_monitor_config_dir }}/{{ coverage_guest.name }}.json"
+    dest: "/var/lib/homelab-update-monitor/guest-staging/{{ coverage_guest.name }}.json"
+    mode: '0600'
+
+- name: Render guest monitoring service
+  ansible.builtin.template:
+    src: homelab-cve-monitor.service.j2
+    dest: "/var/lib/homelab-update-monitor/guest-staging/{{ coverage_guest.name }}.service"
+    mode: '0600'
+  vars:
+    update_monitor_system_name: "{{ coverage_guest.name }}"
+    update_monitor_go_binaries: []
+
+- name: Install scanner, configuration, credentials, and timer into guest
+  ansible.builtin.command:
+    argv: [pct, push, "{{ coverage_guest.id }}", "{{ item.src }}", "{{ item.dest }}", --perms, "{{ item.mode }}"]
+  loop:
+    - {src: /usr/local/bin/trivy, dest: /usr/local/bin/trivy, mode: '0755'}
+    - {src: /usr/local/libexec/homelab-cve-monitor, dest: /usr/local/libexec/homelab-cve-monitor, mode: '0755'}
+    - {src: /usr/local/libexec/homelab_deployment_inventory.py, dest: /usr/local/libexec/homelab_deployment_inventory.py, mode: '0644'}
+    - {src: /usr/local/libexec/homelab-coverage-read, dest: /usr/local/libexec/homelab-coverage-read, mode: '0755'}
+    - {src: /usr/local/libexec/homelab-verify-candidate, dest: /usr/local/libexec/homelab-verify-candidate, mode: '0755'}
+    - {src: "/var/lib/homelab-update-monitor/guest-staging/{{ coverage_guest.name }}.json", dest: /etc/homelab-update-monitor/deployments.json, mode: '0600'}
+    - {src: /etc/homelab-update-monitor/webhook-secret, dest: /etc/homelab-update-monitor/webhook-secret, mode: '0600'}
+    - {src: "/var/lib/homelab-update-monitor/guest-staging/{{ coverage_guest.name }}.service", dest: /etc/systemd/system/homelab-cve-monitor.service, mode: '0644'}
+    - {src: /etc/systemd/system/homelab-cve-monitor.timer, dest: /etc/systemd/system/homelab-cve-monitor.timer, mode: '0644'}
+  changed_when: true
+
+- name: Install guest defensive runner
+  ansible.builtin.command:
+    argv: [pct, push, "{{ coverage_guest.id }}", /usr/local/libexec/homelab-defense, /usr/local/libexec/homelab-defense, --perms, '0755']
+  changed_when: true
+
+- name: Check whether guest action policy already exists
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ coverage_guest.id }}", --, test, -f, /etc/homelab-update-monitor/defense-policy.json]
+  register: guest_defense_policy
+  failed_when: guest_defense_policy.rc not in [0, 1]
+  changed_when: false
+
+- name: Initialize guest action policy disabled
+  ansible.builtin.copy:
+    src: defense-policy.json
+    dest: /var/lib/homelab-update-monitor/guest-staging/defense-policy.json
+    mode: '0600'
+
+- name: Copy the initial disabled policy into the guest
+  ansible.builtin.command:
+    argv: [pct, push, "{{ coverage_guest.id }}", /var/lib/homelab-update-monitor/guest-staging/defense-policy.json, /etc/homelab-update-monitor/defense-policy.json, --perms, '0600']
+  when: guest_defense_policy.rc == 1
+  changed_when: true
+
+- name: Install guest action recovery units
+  ansible.builtin.command:
+    argv: [pct, push, "{{ coverage_guest.id }}", "/etc/systemd/system/{{ item }}", "/etc/systemd/system/{{ item }}", --perms, '0644']
+  loop: [homelab-defense-recovery.service, homelab-defense-recovery.timer]
+  changed_when: true
+
+- name: Reload guest monitoring units
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ coverage_guest.id }}", --, systemctl, daemon-reload]
+  changed_when: true
+
+- name: Enable guest monitoring schedule
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ coverage_guest.id }}", --, systemctl, enable, --now, homelab-cve-monitor.timer, homelab-defense-recovery.timer]
+  changed_when: true
