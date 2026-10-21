@@ -1,0 +1,61 @@
+---
+- name: Require the externally supplied update notification secret
+  ansible.builtin.assert:
+    that:
+      - update_monitor_webhook_secret | length >= 32
+    fail_msg: >-
+      Set HOMELAB_UPDATE_WEBHOOK_SECRET from the existing root-only Matrix
+      bridge webhook secret before applying this role.
+  no_log: true
+
+- name: Store the update notification webhook secret
+  ansible.builtin.copy:
+    content: "{{ update_monitor_webhook_secret }}\n"
+    dest: "{{ update_monitor_credentials_dir }}/webhook-secret"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Install the RSS release monitor
+  ansible.builtin.copy:
+    src: homelab_release_monitor.py
+    dest: /usr/local/libexec/homelab-release-monitor
+    owner: root
+    group: root
+    mode: '0755'
+  when: update_monitor_release_notifier_enabled
+
+- name: Install the managed release feed list
+  ansible.builtin.copy:
+    src: release-feeds.json
+    dest: /etc/homelab-update-monitor/release-feeds.json
+    owner: root
+    group: root
+    mode: '0644'
+  when: update_monitor_release_notifier_enabled
+
+- name: Install the RSS release monitor units
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item | regex_replace('\\.j2$', '') }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - homelab-release-monitor.service.j2
+    - homelab-release-monitor.timer.j2
+  register: update_monitor_release_units
+  when: update_monitor_release_notifier_enabled
+
+- name: Reload systemd for release notifications
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: update_monitor_release_units.changed
+
+- name: Enable the RSS release monitor timer
+  ansible.builtin.systemd_service:
+    name: homelab-release-monitor.timer
+    enabled: true
+    state: started
+  when: update_monitor_release_notifier_enabled

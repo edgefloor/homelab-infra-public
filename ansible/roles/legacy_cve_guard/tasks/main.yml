@@ -1,0 +1,11 @@
+---
+- name: Refuse accidental reactivation of the retired custom CVE pipeline
+  ansible.builtin.assert:
+    that:
+      - homelab_legacy_cve_enabled | default(false) | bool
+    fail_msg: >-
+      The custom CVE, incident, Helix, and Zig investigation pipeline is retired.
+      For a reviewed rollback only, explicitly set homelab_legacy_cve_enabled=true.
+      See docs/procedures/retire-custom-cve.md. General Hermes, release alerts,
+      Beszel, CrowdSec, and the standard Trivy server do not need this opt-in.
+  tags: [always]

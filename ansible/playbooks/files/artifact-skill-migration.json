@@ -1,0 +1,17 @@
+[
+  {
+    "name": "interface command",
+    "before": "homelab-agentctl artifact TARGET RECORD_ID OPERATION '{\"argument\":\"value\"}'\n",
+    "after": "homelab-agentctl snapshot-artifact TARGET OPERATION '{\"snapshot_sha256\":\"...\",\"finding_sha256\":\"...\",\"path\":\"/reported/file\"}'\n"
+  },
+  {
+    "name": "binding authority",
+    "before": "`artifact` uses the scanner scope from one retained CVE alert. The client\nvalidates that the alert belongs to the requested target. The target owns the\nshort-lived capability and does not return its token.\n",
+    "after": "For an artifact read, first call `observe TARGET deployment_coverage` with the\nadvisory. Select one item from `matching_findings`, and copy its\n`binding.snapshot_sha256` and `binding.finding_sha256` values unchanged into a\n`snapshot-artifact` request. The target owns the short-lived capability and does\nnot return its token. If the binding is missing or stale, report the evidence as\nunavailable. Do not derive authority from an alert record.\n"
+  },
+  {
+    "name": "artifact operations",
+    "before": "## Artifact investigation operations\n\nUse `artifact` when an investigation needs the exact executable or file named\nby a retained CVE alert:\n\n```text\nhomelab-agentctl artifact TARGET RECORD_ID inspect_executable '{\"container\":\"name\",\"path\":\"/reported/file\"}'\nhomelab-agentctl artifact TARGET RECORD_ID extract_file '{\"container\":\"name\",\"path\":\"/reported/file\"}'\nhomelab-agentctl artifact TARGET RECORD_ID run_analyzer '{\"analyzer\":\"govulncheck\",\"container\":\"name\",\"path\":\"/reported/file\",\"advisory\":\"CVE-YYYY-NNNN\"}'\n```\n\nOmit `container` for a host artifact. `extract_file` returns at most 64 KiB.\n`run_analyzer` accepts only `govulncheck`. The target binds each request to the\nalerted advisory and the current artifact identity, applies resource limits,\nrecords the observation, and revokes the capability before returning.\n\n",
+    "after": "## Artifact investigation operations\n\nUse `snapshot-artifact` when an investigation needs the exact executable or\nfile named by an accepted deployment snapshot:\n\n```text\nhomelab-agentctl observe TARGET deployment_coverage '{\"advisory\":\"CVE-YYYY-NNNN\"}'\nhomelab-agentctl snapshot-artifact TARGET inspect_executable '{\"snapshot_sha256\":\"...\",\"finding_sha256\":\"...\",\"container\":\"name\",\"path\":\"/reported/file\"}'\nhomelab-agentctl snapshot-artifact TARGET extract_file '{\"snapshot_sha256\":\"...\",\"finding_sha256\":\"...\",\"container\":\"name\",\"path\":\"/reported/file\"}'\nhomelab-agentctl snapshot-artifact TARGET run_analyzer '{\"snapshot_sha256\":\"...\",\"finding_sha256\":\"...\",\"analyzer\":\"govulncheck\",\"container\":\"name\",\"path\":\"/reported/file\",\"advisory\":\"CVE-YYYY-NNNN\"}'\n```\n\nOmit `container` for a host artifact. `extract_file` returns at most 64 KiB.\n`run_analyzer` accepts only `govulncheck`. The target binds each request to the\naccepted snapshot, exact finding, reported path, and current artifact identity.\nIt applies resource limits, records the observation, and revokes the capability\nbefore returning. A stale snapshot, a missing binding, or a changed artifact is\nunavailable evidence. Do not fall back to an alert-scoped artifact request.\n\n"
+  }
+]

@@ -1,0 +1,183 @@
+---
+# Native publication only. No test alert, webhook POST, or Matrix send is called.
+- name: Publish the prepared notification workflow without interrupting executions
+  hosts: n8n_servers
+  become: true
+  gather_facts: false
+  vars_files: [../roles/n8n/defaults/main.yml]
+  vars:
+    n8n_notification_cli:
+      - "/opt/node-v{{ n8n_node_version }}-linux-x64/bin/node"
+      - /opt/n8n/current/node_modules/n8n/bin/n8n
+    n8n_notification_environment:
+      HOME: /var/lib/n8n
+      N8N_USER_FOLDER: /var/lib/n8n
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+  tasks:
+    - name: List active workflows through the native CLI
+      ansible.builtin.command:
+        argv: "{{ n8n_notification_cli + ['list:workflow', '--active=true', '--onlyId'] }}"
+      become_user: n8n
+      environment: "{{ n8n_notification_environment }}"
+      register: n8n_notification_active
+      changed_when: false
+    - name: Wait for a window without running executions before the native CLI restart
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -c
+          - "import sqlite3; db=sqlite3.connect('file:/var/lib/n8n/.n8n/database.sqlite?mode=ro',uri=True); print(db.execute(\"SELECT COUNT(*) FROM execution_entity WHERE status IN ('new','running')\").fetchone()[0])"
+      become_user: n8n
+      changed_when: false
+      register: n8n_notification_running
+      until: n8n_notification_running.stdout | trim == '0'
+      retries: 20
+      delay: 15
+      when: "'homelabDTrackDaily' not in n8n_notification_active.stdout_lines"
+    - name: Publish only the reviewed notification workflow
+      ansible.builtin.command:
+        argv: "{{ n8n_notification_cli + ['publish:workflow', '--id=homelabDTrackDaily'] }}"
+      become_user: n8n
+      environment: "{{ n8n_notification_environment }}"
+      register: n8n_notification_published
+      when: "'homelabDTrackDaily' not in n8n_notification_active.stdout_lines"
+    - name: Reload native workflow registration after CLI publication
+      ansible.builtin.systemd_service:
+        name: n8n.service
+        state: restarted
+      when: n8n_notification_published.changed
+    - name: Verify n8n readiness without executing a workflow
+      ansible.builtin.uri:
+        url: "http://{{ n8n_address }}:{{ n8n_port }}/healthz/readiness"
+        use_proxy: false
+      register: n8n_notification_health
+      until: n8n_notification_health.status == 200
+      retries: 15
+      delay: 2
+    - name: Read the native published workflow state
+      ansible.builtin.command:
+        argv: "{{ n8n_notification_cli + ['list:workflow', '--active=true', '--onlyId'] }}"
+      become_user: n8n
+      environment: "{{ n8n_notification_environment }}"
+      changed_when: false
+      register: n8n_notification_active_final
+    - name: Require the workflow to be published
+      ansible.builtin.assert:
+        that: "'homelabDTrackDaily' in n8n_notification_active_final.stdout_lines"
+
+- name: Enable the prepared native daily summary
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  vars:
+    dtrack_notification_api: http://127.0.0.1:8081/api
+    dtrack_notification_rule: "{{ lookup('file', playbook_dir + '/../files/dependency-track-notification-rule.json') | from_json }}"
+  tasks:
+    - name: Verify the internal n8n HTTPS route without sending a notification
+      ansible.builtin.uri:
+        url: https://n8n.homelab.example/healthz/readiness
+        return_content: true
+        follow_redirects: none
+        use_proxy: false
+      register: dtrack_notification_route
+      failed_when: dtrack_notification_route.status != 200 or (dtrack_notification_route.json.status | default('')) != 'ok'
+    - name: Enable and read back only the prepared native alert
+      no_log: true
+      block:
+        - name: Read the local bootstrap administrator credential
+          ansible.builtin.slurp:
+            src: /root/.config/dependency-track/admin.json
+          register: dtrack_notification_admin
+        - name: Read the native portfolio identifier
+          ansible.builtin.slurp:
+            src: /root/.config/dependency-track/portfolio.json
+          register: dtrack_notification_portfolio
+        - name: Authenticate through the local native API
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body:
+              username: "{{ (dtrack_notification_admin.content | b64decode | from_json).username }}"
+              password: "{{ (dtrack_notification_admin.content | b64decode | from_json).password }}"
+            return_content: true
+            use_proxy: false
+          register: dtrack_notification_login
+        - name: Read the existing native alert
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/notification/rule"
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            use_proxy: false
+          register: dtrack_notification_rules
+        - name: Select the exact prepared rule
+          ansible.builtin.set_fact:
+            dtrack_notification_selected: "{{ dtrack_notification_rules.json | selectattr('name', 'equalto', dtrack_notification_rule.name) | list }}"
+        - name: Require the prepared native schedule and expected collection
+          ansible.builtin.assert:
+            that:
+              - dtrack_notification_selected | length == 1
+              - dtrack_notification_selected[0].triggerType == 'SCHEDULE'
+              - dtrack_notification_selected[0].scheduleCron == '0 8 * * *'
+              - dtrack_notification_selected[0].scheduleSkipUnchanged
+              - dtrack_notification_selected[0].notifyChildren
+              - (dtrack_notification_selected[0].projects | map(attribute='uuid') | list) == [(dtrack_notification_portfolio.content | b64decode | from_json).uuid]
+              - (dtrack_notification_selected[0].publisherConfig | from_json).destinationUrl == 'https://n8n.homelab.example/webhook/dependency-track-daily'
+        - name: Recompute the disabled schedule before approving its UTC trigger
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/notification/rule"
+            method: POST
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            body_format: json
+            body: "{{ dtrack_notification_rule | combine({'uuid': dtrack_notification_selected[0].uuid, 'enabled': false, 'publisherConfig': dtrack_notification_selected[0].publisherConfig}) }}"
+            use_proxy: false
+          register: dtrack_notification_preview
+          when: not dtrack_notification_selected[0].enabled
+        - name: Reject an incorrect or overdue native trigger before enabling
+          ansible.builtin.include_tasks: tasks/dependency-track-verify-trigger.yml
+          vars:
+            dtrack_verify_trigger_epoch_ms: "{{ (dtrack_notification_preview.json if not dtrack_notification_selected[0].enabled else dtrack_notification_selected[0]).scheduleNextTriggerAt }}"
+        - name: Enable the reviewed alert for its next native scheduled run
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/notification/rule"
+            method: POST
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            body_format: json
+            body: "{{ dtrack_notification_rule | combine({'uuid': dtrack_notification_selected[0].uuid, 'enabled': true, 'publisherConfig': dtrack_notification_selected[0].publisherConfig}) }}"
+            use_proxy: false
+          register: dtrack_notification_enabled
+        - name: Verify enabled read-back and disable the rule if its trigger is invalid
+          block:
+            - name: Require native read-back of the enabled daily rule
+              ansible.builtin.assert:
+                that:
+                  - dtrack_notification_enabled.json.enabled
+                  - dtrack_notification_enabled.json.scheduleCron == '0 8 * * *'
+                  - dtrack_notification_enabled.json.scheduleNextTriggerAt is defined
+            - name: Require the enabled native trigger to remain a future 08:00 UTC
+              ansible.builtin.include_tasks: tasks/dependency-track-verify-trigger.yml
+              vars:
+                dtrack_verify_trigger_epoch_ms: "{{ dtrack_notification_enabled.json.scheduleNextTriggerAt }}"
+          rescue:
+            - name: Disable this rule after an invalid activation read-back
+              ansible.builtin.uri:
+                url: "{{ dtrack_notification_api }}/v1/notification/rule"
+                method: POST
+                headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+                body_format: json
+                body: "{{ dtrack_notification_rule | combine({'uuid': dtrack_notification_selected[0].uuid, 'enabled': false, 'publisherConfig': dtrack_notification_selected[0].publisherConfig}) }}"
+                use_proxy: false
+              register: dtrack_notification_disabled
+            - ansible.builtin.assert:
+                that: not dtrack_notification_disabled.json.enabled
+            - ansible.builtin.fail:
+                msg: Native activation timestamp was invalid; the notification rule was disabled.
+        - name: Retain only nonsecret activation evidence
+          ansible.builtin.set_fact:
+            dtrack_notification_evidence:
+              enabled: "{{ dtrack_notification_enabled.json.enabled }}"
+              schedule: "{{ dtrack_notification_enabled.json.scheduleCron }}"
+              next_trigger_epoch_ms: "{{ dtrack_notification_enabled.json.scheduleNextTriggerAt }}"
+              rule_uuid: "{{ dtrack_notification_enabled.json.uuid }}"
+    - name: Report the native scheduled activation without a test message
+      ansible.builtin.debug:
+        var: dtrack_notification_evidence

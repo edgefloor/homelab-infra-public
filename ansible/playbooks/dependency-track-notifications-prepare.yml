@@ -1,0 +1,283 @@
+---
+# Preparation only: never activates a workflow, enables a rule, or sends a message.
+- name: Prepare the native homelab portfolio
+  ansible.builtin.import_playbook: dependency-track-portfolio.yml
+
+- name: Prepare an inactive native n8n Matrix workflow
+  hosts: n8n_servers
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../roles/n8n/defaults/main.yml
+  vars:
+    dtrack_notification_project_uuids: "{{ [hostvars[groups['incident_servers'][0]].dtrack_notification_portfolio_uuid] }}"
+    dtrack_notification_workflow_id: homelabDTrackDaily
+    dtrack_notification_refresh_inactive: false
+    dtrack_notification_secret_path: /etc/n8n/dependency-track-webhook-secret
+    n8n_notification_cli:
+      - "/opt/node-v{{ n8n_node_version }}-linux-x64/bin/node"
+      - /opt/n8n/current/node_modules/n8n/bin/n8n
+    n8n_notification_environment:
+      HOME: /var/lib/n8n
+      N8N_USER_FOLDER: /var/lib/n8n
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+  pre_tasks:
+    - name: Require selected Dependency-Track projects before preparing notifications
+      ansible.builtin.assert:
+        that:
+          - dtrack_notification_project_uuids | default([]) | length > 0
+        fail_msg: Provide reviewed project or collection UUIDs in dtrack_notification_project_uuids.
+    - name: Validate selected project identifiers
+      ansible.builtin.assert:
+        that: item is match('^[0-9a-fA-F-]{36}$')
+      loop: "{{ dtrack_notification_project_uuids }}"
+  tasks:
+    - name: List existing workflow IDs through the native CLI
+      ansible.builtin.command:
+        argv: "{{ n8n_notification_cli + ['list:workflow', '--onlyId'] }}"
+      become_user: n8n
+      environment: "{{ n8n_notification_environment }}"
+      register: n8n_notification_workflows
+      changed_when: false
+
+    - name: List active workflow IDs through the native CLI
+      ansible.builtin.command:
+        argv: "{{ n8n_notification_cli + ['list:workflow', '--active=true', '--onlyId'] }}"
+      become_user: n8n
+      environment: "{{ n8n_notification_environment }}"
+      register: n8n_notification_active_workflows
+      changed_when: false
+
+    - name: Refuse to modify an already active notification workflow
+      ansible.builtin.assert:
+        that: dtrack_notification_workflow_id not in n8n_notification_active_workflows.stdout_lines
+        fail_msg: The notification workflow is already active. Preparation never replaces or deactivates a live workflow.
+
+    - name: Create the draft or refresh an explicitly selected inactive draft
+      when: dtrack_notification_workflow_id not in n8n_notification_workflows.stdout_lines or dtrack_notification_refresh_inactive | bool
+      no_log: true
+      block:
+        - name: Read the existing Matrix bot token privately
+          ansible.builtin.slurp:
+            src: /etc/crowdsec-matrix-bridge/matrix-access-token
+          delegate_to: pangolin
+          register: n8n_matrix_token
+        - name: Read the existing Matrix vulnerability room privately
+          ansible.builtin.slurp:
+            src: /etc/crowdsec-matrix-bridge/matrix-room-vulnerabilities
+          delegate_to: pangolin
+          register: n8n_matrix_room
+        - name: Require an existing Matrix room and token
+          ansible.builtin.assert:
+            that:
+              - n8n_matrix_token.content | b64decode | trim | length > 0
+              - (n8n_matrix_room.content | b64decode | trim) is match('^![^:]+:[^/]+$')
+        - name: Generate the dedicated webhook credential once
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/python3
+              - -c
+              - "import os,secrets; p={{ dtrack_notification_secret_path | to_json }}; f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); os.write(f,(secrets.token_urlsafe(48)+chr(10)).encode()); os.close(f)"
+            creates: "{{ dtrack_notification_secret_path }}"
+        - name: Read the dedicated webhook credential privately
+          ansible.builtin.slurp:
+            src: "{{ dtrack_notification_secret_path }}"
+          register: n8n_dtrack_webhook_secret
+        - name: Create private temporary import staging
+          ansible.builtin.tempfile:
+            state: directory
+            path: /var/lib/n8n
+            prefix: .notification-import-
+          register: n8n_notification_staging
+        - name: Permit the n8n account to read its import staging
+          ansible.builtin.file:
+            path: "{{ n8n_notification_staging.path }}"
+            owner: n8n
+            group: n8n
+            mode: '0700'
+        - name: Stage only the two encrypted-on-import credentials
+          ansible.builtin.copy:
+            content: "{{ n8n_notification_credentials | to_json }}\n"
+            dest: "{{ n8n_notification_staging.path }}/credentials.json"
+            owner: n8n
+            group: n8n
+            mode: '0600'
+          vars:
+            n8n_notification_credentials:
+              - id: homelabDTrackHook
+                name: Dependency-Track webhook
+                type: httpHeaderAuth
+                data:
+                  name: X-Dependency-Track-Token
+                  value: "{{ n8n_dtrack_webhook_secret.content | b64decode | trim }}"
+              - id: homelabDTrackMatrix
+                name: Matrix vulnerability notifications
+                type: matrixApi
+                data:
+                  homeserverUrl: https://matrix.homelab.example
+                  accessToken: "{{ n8n_matrix_token.content | b64decode | trim }}"
+        - name: Stage the reviewed workflow without interpreting its native expressions
+          ansible.builtin.copy:
+            src: ../files/dependency-track-matrix-workflow.json
+            dest: "{{ n8n_notification_staging.path }}/workflow.json"
+            owner: n8n
+            group: n8n
+            mode: '0600'
+        - name: Bind only the existing Matrix room placeholder
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/python3
+              - -c
+              - "import json,sys; p=sys.argv[1]; f=json.load(open(p)); room=sys.stdin.read().strip(); [n['parameters'].update(roomId=room) for n in f['nodes'] if n['type']=='n8n-nodes-base.matrix']; open(p,'w').write(json.dumps(f))"
+              - "{{ n8n_notification_staging.path }}/workflow.json"
+            stdin: "{{ n8n_matrix_room.content | b64decode | trim }}"
+        - name: Import credentials using n8n encryption
+          ansible.builtin.command:
+            argv: "{{ n8n_notification_cli + ['import:credentials', '--input=' + n8n_notification_staging.path + '/credentials.json'] }}"
+          become_user: n8n
+          environment: "{{ n8n_notification_environment }}"
+        - name: Import the workflow explicitly inactive
+          ansible.builtin.command:
+            argv: "{{ n8n_notification_cli + ['import:workflow', '--activeState=false', '--input=' + n8n_notification_staging.path + '/workflow.json'] }}"
+          become_user: n8n
+          environment: "{{ n8n_notification_environment }}"
+      always:
+        - name: Remove temporary plaintext credential imports
+          ansible.builtin.file:
+            path: "{{ n8n_notification_staging.path }}"
+            state: absent
+          when: n8n_notification_staging.path is defined
+
+    - name: Read the retained dedicated webhook credential for the native publisher
+      ansible.builtin.slurp:
+        src: "{{ dtrack_notification_secret_path }}"
+      register: n8n_dtrack_webhook_secret
+      no_log: true
+
+- name: Prepare a disabled native Dependency-Track summary alert
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  vars:
+    dtrack_notification_project_uuids: "{{ [dtrack_notification_portfolio_uuid] }}"
+    dtrack_notification_api: http://127.0.0.1:8081/api
+    dtrack_notification_destination: https://n8n.homelab.example/webhook/dependency-track-daily
+    dtrack_notification_secret_name: homelab-dtrack-n8n
+    dtrack_notification_rule: "{{ lookup('file', playbook_dir + '/../files/dependency-track-notification-rule.json') | from_json }}"
+  tasks:
+    - name: Configure only an inactive alert through the native API
+      no_log: true
+      block:
+        - name: Read the local bootstrap administrator credential
+          ansible.builtin.slurp:
+            src: /root/.config/dependency-track/admin.json
+          register: dtrack_notification_admin
+        - name: Authenticate locally without logging the password or session
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body:
+              username: "{{ (dtrack_notification_admin.content | b64decode | from_json).username }}"
+              password: "{{ (dtrack_notification_admin.content | b64decode | from_json).password }}"
+            return_content: true
+            use_proxy: false
+          register: dtrack_notification_login
+        - name: Read available publishers
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/notification/publisher"
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            use_proxy: false
+          register: dtrack_notification_publishers
+        - name: Select the native Webhook publisher
+          ansible.builtin.set_fact:
+            dtrack_notification_publisher: "{{ dtrack_notification_publishers.json | selectattr('extensionName', 'equalto', 'webhook') | first }}"
+        - name: Read existing notification rules
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/notification/rule"
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            use_proxy: false
+          register: dtrack_notification_rules
+        - name: Select an existing draft by its exact name
+          ansible.builtin.set_fact:
+            dtrack_notification_existing: "{{ dtrack_notification_rules.json | selectattr('name', 'equalto', dtrack_notification_rule.name) | list }}"
+        - name: Refuse to overwrite a live or ambiguous alert
+          ansible.builtin.assert:
+            that:
+              - dtrack_notification_existing | length <= 1
+              - dtrack_notification_existing | length == 0 or not dtrack_notification_existing[0].enabled
+              - >-
+                dtrack_notification_existing | length == 0 or
+                ((dtrack_notification_existing[0].projects | default([]) | map(attribute='uuid') | list)
+                | difference(dtrack_notification_project_uuids) | length == 0)
+        - name: Read the managed webhook secret metadata
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v2/secrets/{{ dtrack_notification_secret_name }}"
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            status_code: [200, 404]
+            use_proxy: false
+          register: dtrack_notification_secret
+        - name: Create the dedicated managed webhook secret
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v2/secrets"
+            method: POST
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            body_format: json
+            body:
+              name: "{{ dtrack_notification_secret_name }}"
+              value: "{{ hostvars[groups['n8n_servers'][0]].n8n_dtrack_webhook_secret.content | b64decode | trim }}"
+              description: Authentication for the native n8n daily summary webhook
+            status_code: 201
+            use_proxy: false
+          when: dtrack_notification_secret.status == 404
+        - name: Reconcile the dedicated managed webhook secret
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v2/secrets/{{ dtrack_notification_secret_name }}"
+            method: PATCH
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            body_format: json
+            body:
+              value: "{{ hostvars[groups['n8n_servers'][0]].n8n_dtrack_webhook_secret.content | b64decode | trim }}"
+            status_code: [204, 304]
+            use_proxy: false
+          when: dtrack_notification_secret.status == 200
+        - name: Create the native scheduled alert
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/notification/rule/scheduled"
+            method: PUT
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            body_format: json
+            body:
+              name: "{{ dtrack_notification_rule.name }}"
+              scope: PORTFOLIO
+              level: INFORMATIONAL
+              publisher: {uuid: "{{ dtrack_notification_publisher.uuid }}"}
+            status_code: 201
+            use_proxy: false
+          register: dtrack_notification_created
+          when: dtrack_notification_existing | length == 0
+        - name: Identify the draft rule
+          ansible.builtin.set_fact:
+            dtrack_notification_rule_uuid: "{{ dtrack_notification_created.json.uuid if dtrack_notification_existing | length == 0 else dtrack_notification_existing[0].uuid }}"
+        - name: Attach the explicitly reviewed project or collection list
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/notification/rule/{{ dtrack_notification_rule_uuid }}/project/{{ item }}"
+            method: POST
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            status_code: [200, 304]
+            use_proxy: false
+          loop: "{{ dtrack_notification_project_uuids }}"
+        - name: Save the disabled daily rule with native filtering and unchanged suppression
+          ansible.builtin.uri:
+            url: "{{ dtrack_notification_api }}/v1/notification/rule"
+            method: POST
+            headers: {Authorization: "Bearer {{ dtrack_notification_login.content }}"}
+            body_format: json
+            body: "{{ dtrack_notification_rule | combine({'uuid': dtrack_notification_rule_uuid, 'publisherConfig': dtrack_notification_publisher_config | to_json}) }}"
+            use_proxy: false
+          vars:
+            dtrack_notification_publisher_config:
+              destinationUrl: "{{ dtrack_notification_destination }}"
+              authHeaderName: X-Dependency-Track-Token
+              authHeaderValue: "{{ dtrack_notification_secret_name }}"
+              publishProtobuf: false

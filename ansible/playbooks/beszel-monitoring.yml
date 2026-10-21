@@ -1,0 +1,83 @@
+---
+- name: Prepare native Beszel enrollment
+  hosts: pangolin
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install the native monitoring configuration helper
+      ansible.builtin.copy:
+        src: ../roles/beszel_hub/files/configure_monitoring.py
+        dest: /usr/local/libexec/homelab-beszel-configure.py
+        owner: root
+        group: root
+        mode: '0700'
+      tags: [enroll, alerts]
+
+    - name: Write the explicit enrollment and alert scope
+      ansible.builtin.copy:
+        dest: /etc/homelab-beszel-monitoring.json
+        owner: root
+        group: root
+        mode: '0600'
+        content: |
+          {
+            "enroll": [
+          {% for target in ['plan-runner', 'hermes-agent', 'incident', 'news-embeddings'] %}
+              {{ {'inventory_host': target, 'name': hostvars[target].beszel_agent_system_name,
+                  'host': hostvars[target].ansible_host} | to_json }}{{ ',' if not loop.last else '' }}
+          {% endfor %}
+            ],
+            "expected_system_names": {{ groups['beszel_agents'] | map('extract', hostvars, 'beszel_agent_system_name') | unique | list | to_json }}
+          }
+      tags: [enroll, alerts]
+
+    - name: Enroll agents with temporary secret transport and guaranteed cleanup
+      tags: [never, enroll]
+      block:
+        - name: Create or reuse distinct per-system enrollment tokens
+          ansible.builtin.command:
+            argv: [python3, /usr/local/libexec/homelab-beszel-configure.py, enroll, --config, /etc/homelab-beszel-monitoring.json]
+          register: beszel_enrollment
+          changed_when: (beszel_enrollment.stdout | from_json).created_systems | int > 0
+
+        - name: Read the root-only temporary enrollment material
+          ansible.builtin.slurp:
+            src: /run/homelab-beszel-enrollment.json
+          register: beszel_enrollment_material
+          no_log: true
+
+        - name: Give each target only its own enrollment material
+          ansible.builtin.set_fact:
+            beszel_agent_token: "{{ (beszel_enrollment_material.content | b64decode | from_json).enrollment[item] }}"
+            beszel_agent_hub_public_key: "{{ (beszel_enrollment_material.content | b64decode | from_json).hub_public_key }}"
+          delegate_to: "{{ item }}"
+          delegate_facts: true
+          loop: [plan-runner, hermes-agent, incident, news-embeddings]
+          no_log: true
+      always:
+        - name: Remove temporary enrollment material
+          ansible.builtin.file:
+            path: /run/homelab-beszel-enrollment.json
+            state: absent
+
+- name: Install the four missing native monitoring agents
+  hosts: plan-runner:hermes-agent:incident:news-embeddings
+  become: true
+  tags: [never, enroll]
+  roles:
+    - beszel_agent
+
+- name: Reconcile native alerts after agent enrollment and retired-service cleanup
+  hosts: pangolin
+  become: true
+  gather_facts: false
+  tags: [never, alerts]
+  tasks:
+    - name: Enable status, failed-service and disk alerts without changing notifications
+      ansible.builtin.command:
+        argv: [python3, /usr/local/libexec/homelab-beszel-configure.py, alerts, --config, /etc/homelab-beszel-monitoring.json]
+      register: beszel_alert_configuration
+      changed_when: (beszel_alert_configuration.stdout | from_json).changed_alerts | int > 0
+      retries: 3
+      delay: 10
+      until: beszel_alert_configuration.rc == 0

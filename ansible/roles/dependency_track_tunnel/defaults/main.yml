@@ -1,0 +1,7 @@
+---
+dependency_track_tunnel_edge_host: pangolin
+dependency_track_tunnel_edge_address: "{{ hostvars[dependency_track_tunnel_edge_host].ansible_host }}"
+dependency_track_tunnel_client_user: dtrack-tunnel
+dependency_track_tunnel_edge_user: dtrack-upload
+dependency_track_tunnel_edge_port: 8791
+dependency_track_tunnel_api_port: 8081

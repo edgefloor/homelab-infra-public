@@ -1,0 +1,27 @@
+---
+dependency_track_version: 5.2.0
+dependency_track_backend_url: https://github.com/DependencyTrack/dependency-track/releases/download/5.2.0/dependency-track-apiserver-dist.tar.gz
+dependency_track_backend_sha256: dd0d4bdb3639be8ae72c0715cd33f5476b6f1d2ffb153236873c4fe7e1cb1441
+dependency_track_frontend_url: https://github.com/DependencyTrack/frontend/releases/download/5.2.0/frontend-dist.zip
+dependency_track_frontend_sha256: 8a0867a08fa8f78abb1ad1a5a7a648b70fb7a00114bdcc7fdd0ccf8647d11335
+dependency_track_java_version: 25.0.4.1_1
+dependency_track_java_url: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%2B1/OpenJDK25U-jre_x64_linux_hotspot_25.0.4.1_1.tar.gz
+dependency_track_java_sha256: 1731a34baadec5479258ea0202e4d5d865d2efeee60cb0c7d7eb056fe96ca219
+dependency_track_data_root: /var/lib/homelab-incidents/dependency-track
+dependency_track_storage_mount: /var/lib/homelab-incidents
+dependency_track_url: https://vulns.homelab.example
+dependency_track_address: 10.42.0.214
+dependency_track_proxy_address: 10.42.0.202
+dependency_track_frontend_port: 8080
+dependency_track_api_port: 8081
+dependency_track_management_port: 9000
+dependency_track_postgresql_port: 5433
+dependency_track_heap: 2g
+dependency_track_outbound_destinations: [external, matrix.homelab.example, n8n.homelab.example]
+dependency_track_notification_hostname: n8n.homelab.example
+dependency_track_notification_proxy: "{{ (lookup('file', role_path + '/../../../inventory/routes.yml') | from_yaml).homelab_routing.caddy_address }}"
+dependency_track_trivy_url: https://matrix.homelab.example/_trivy
+dependency_track_trivy_credentials_host: pangolin
+dependency_track_trivy_credentials_path: /etc/homelab-trivy/server.json
+dependency_track_upload_permissions: [BOM_UPLOAD, PROJECT_CREATION_UPLOAD, VIEW_PORTFOLIO]
+dependency_track_api_key_days: 365

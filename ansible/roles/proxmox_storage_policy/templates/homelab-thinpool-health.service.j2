@@ -1,0 +1,14 @@
+[Unit]
+Description=Check thin-pool usage and extension headroom
+After=lvm2-monitor.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/check-thinpool-health --pool {{ backup_plan.storage.thin_pool_device }} --data-limit {{ backup_plan.storage.thin_pool_health_data_percent }} --metadata-limit {{ backup_plan.storage.thin_pool_health_metadata_percent }} --extend-percent {{ backup_plan.storage.thin_pool_autoextend_percent }} --reserve-bytes {{ (backup_plan.storage.thin_pool_minimum_vg_reserve_gib | int) * 1073741824 }}
+TimeoutStartSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=full
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX

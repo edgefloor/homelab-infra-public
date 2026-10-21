@@ -1,0 +1,306 @@
+---
+- name: Create the Transmission group with storage-compatible ID
+  ansible.builtin.group:
+    name: "{{ transmission_group }}"
+    gid: "{{ transmission_gid }}"
+    system: true
+
+- name: Create the Transmission user with storage-compatible ID
+  ansible.builtin.user:
+    name: "{{ transmission_user }}"
+    uid: "{{ transmission_uid }}"
+    group: "{{ transmission_group }}"
+    home: /var/lib/transmission-daemon
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: true
+
+- name: Enable the official Debian backports repository for Transmission
+  ansible.builtin.copy:
+    content: |
+      Types: deb
+      URIs: https://deb.debian.org/debian
+      Suites: trixie-backports
+      Components: main
+      Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+    dest: /etc/apt/sources.list.d/transmission-backports.sources
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Pin the declared Transmission package version
+  ansible.builtin.copy:
+    content: |
+      Package: transmission-common transmission-daemon
+      Pin: version {{ transmission_package_version }}
+      Pin-Priority: 1001
+    dest: /etc/apt/preferences.d/transmission
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install pinned Debian Transmission packages
+  ansible.builtin.apt:
+    name:
+      - "transmission-common={{ transmission_package_version }}"
+      - "transmission-daemon={{ transmission_package_version }}"
+    state: present
+    update_cache: true
+    allow_downgrade: true
+    policy_rc_d: 101
+  register: transmission_packages
+
+- name: Apply requested Transmission service state with the installed binary
+  ansible.builtin.systemd_service:
+    name: transmission-daemon.service
+    enabled: "{{ transmission_start_service }}"
+    state: >-
+      {{
+        'restarted'
+        if transmission_start_service and transmission_packages.changed
+        else ('started' if transmission_start_service else 'stopped')
+      }}
+
+- name: Read Transmission RPC authentication state
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - >-
+        import json;
+        print(str(json.load(open('/etc/transmission-daemon/settings.json'))['rpc-authentication-required']).lower())
+  register: transmission_rpc_authentication_state
+  changed_when: false
+  failed_when: transmission_rpc_authentication_state.stdout not in ['true', 'false']
+
+- name: Stop Transmission before changing its settings
+  ansible.builtin.systemd_service:
+    name: transmission-daemon.service
+    state: stopped
+  when:
+    - transmission_start_service
+    - transmission_rpc_authentication_state.stdout != (transmission_rpc_authentication_required | bool | ternary('true', 'false'))
+
+- name: Configure Transmission RPC authentication
+  ansible.builtin.replace:
+    path: /etc/transmission-daemon/settings.json
+    regexp: '("rpc-authentication-required"\s*:\s*)(true|false)'
+    replace: '\1{{ transmission_rpc_authentication_required | bool | ternary("true", "false") }}'
+    backup: true
+  register: transmission_rpc_authentication_config
+  when: transmission_rpc_authentication_state.stdout != (transmission_rpc_authentication_required | bool | ternary('true', 'false'))
+
+- name: Restore requested Transmission service state after changing settings
+  ansible.builtin.systemd_service:
+    name: transmission-daemon.service
+    enabled: "{{ transmission_start_service }}"
+    state: "{{ 'started' if transmission_start_service else 'stopped' }}"
+  when: transmission_rpc_authentication_config.changed
+
+- name: Check router-safe Transmission session settings
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - |
+        import json
+        import sys
+
+        with open(sys.argv[1], encoding="utf-8") as settings_file:
+            current = json.load(settings_file)
+        desired = json.loads(sys.argv[2])
+        removed = json.loads(sys.argv[3])
+        matches = all(current.get(key) == value for key, value in desired.items())
+        clean = all(key not in current for key in removed)
+        print("configured" if matches and clean else "drift")
+      - /etc/transmission-daemon/settings.json
+      - "{{ transmission_router_safe_settings | to_json }}"
+      - "{{ transmission_router_removed_settings | to_json }}"
+  register: transmission_router_safe_settings_state
+  changed_when: false
+  failed_when: transmission_router_safe_settings_state.stdout not in ['configured', 'drift']
+
+- name: Apply router-safe Transmission session settings
+  when: transmission_router_safe_settings_state.stdout == 'drift'
+  block:
+    - name: Stop Transmission before changing router-safe settings
+      ansible.builtin.systemd_service:
+        name: transmission-daemon.service
+        state: stopped
+
+    - name: Update router-safe Transmission settings atomically
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -c
+          - |
+            import json
+            import os
+            import stat
+            import sys
+            import tempfile
+
+            path = sys.argv[1]
+            desired = json.loads(sys.argv[2])
+            removed = json.loads(sys.argv[3])
+            with open(path, encoding="utf-8") as settings_file:
+                settings = json.load(settings_file)
+            settings.update(desired)
+            for key in removed:
+                settings.pop(key, None)
+
+            metadata = os.stat(path)
+            directory = os.path.dirname(path)
+            descriptor, temporary_path = tempfile.mkstemp(prefix=".settings-", suffix=".json", dir=directory)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as settings_file:
+                    json.dump(settings, settings_file, indent=4, sort_keys=True)
+                    settings_file.write("\n")
+                    settings_file.flush()
+                    os.fsync(settings_file.fileno())
+                os.chown(temporary_path, metadata.st_uid, metadata.st_gid)
+                os.chmod(temporary_path, stat.S_IMODE(metadata.st_mode))
+                os.replace(temporary_path, path)
+            finally:
+                if os.path.exists(temporary_path):
+                    os.unlink(temporary_path)
+          - /etc/transmission-daemon/settings.json
+          - "{{ transmission_router_safe_settings | to_json }}"
+          - "{{ transmission_router_removed_settings | to_json }}"
+      changed_when: true
+  always:
+    - name: Restore requested Transmission service state after router-safe settings
+      ansible.builtin.systemd_service:
+        name: transmission-daemon.service
+        enabled: "{{ transmission_start_service }}"
+        state: "{{ 'started' if transmission_start_service else 'stopped' }}"
+
+- name: Verify router-safe Transmission session settings
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - |
+        import json
+        import sys
+
+        with open(sys.argv[1], encoding="utf-8") as settings_file:
+            current = json.load(settings_file)
+        desired = json.loads(sys.argv[2])
+        removed = json.loads(sys.argv[3])
+        mismatches = [key for key, value in desired.items() if current.get(key) != value]
+        mismatches.extend(key for key in removed if key in current)
+        if mismatches:
+            raise SystemExit("mismatched managed settings: " + ", ".join(sorted(mismatches)))
+        print("configured")
+      - /etc/transmission-daemon/settings.json
+      - "{{ transmission_router_safe_settings | to_json }}"
+      - "{{ transmission_router_removed_settings | to_json }}"
+  changed_when: false
+
+- name: Create File Browser directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /var/cache/homelab-tools, mode: '0755' }
+    - { path: /opt/filebrowser/releases, mode: '0755' }
+    - { path: "/opt/filebrowser/releases/{{ filebrowser_version }}", mode: '0755' }
+    - { path: /var/lib/filebrowser, mode: '0700' }
+
+- name: Download the official File Browser release
+  ansible.builtin.get_url:
+    url: "{{ filebrowser_archive_url }}"
+    dest: "/var/cache/homelab-tools/filebrowser-{{ filebrowser_version }}-linux-amd64.tar.gz"
+    checksum: "sha256:{{ filebrowser_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the File Browser release
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/filebrowser-{{ filebrowser_version }}-linux-amd64.tar.gz"
+    dest: "/opt/filebrowser/releases/{{ filebrowser_version }}"
+    remote_src: true
+    creates: "/opt/filebrowser/releases/{{ filebrowser_version }}/filebrowser"
+
+- name: Link the active File Browser binary
+  ansible.builtin.file:
+    src: "/opt/filebrowser/releases/{{ filebrowser_version }}/filebrowser"
+    dest: /usr/local/bin/filebrowser
+    state: link
+    force: true
+  register: filebrowser_release_link
+
+- name: Install the File Browser service
+  ansible.builtin.template:
+    src: filebrowser.service.j2
+    dest: /etc/systemd/system/filebrowser.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: filebrowser_unit
+
+- name: Reload systemd for File Browser
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: filebrowser_unit.changed
+
+- name: Apply requested File Browser service state
+  ansible.builtin.systemd_service:
+    name: filebrowser.service
+    enabled: "{{ filebrowser_start_service }}"
+    state: >-
+      {{ 'restarted' if filebrowser_start_service and
+         (filebrowser_release_link.changed or filebrowser_unit.changed)
+         else ('started' if filebrowser_start_service else 'stopped') }}
+
+- name: Read installed Transmission version
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - -W
+      - "-f=${Version}"
+      - transmission-daemon
+  register: transmission_installed_version
+  changed_when: false
+  failed_when: transmission_installed_version.stdout != transmission_package_version
+
+- name: Read installed File Browser version
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/filebrowser
+      - version
+  register: filebrowser_installed_version
+  changed_when: false
+  failed_when: filebrowser_version not in filebrowser_installed_version.stdout
+
+- name: Check Transmission web interface
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ transmission_rpc_port }}/transmission/web/"
+    status_code: "{{ [401] if transmission_rpc_authentication_required else [200] }}"
+  register: transmission_health
+  retries: 30
+  delay: 2
+  until: transmission_health.status == (401 if transmission_rpc_authentication_required else 200)
+  when: transmission_start_service
+
+- name: Check Transmission peer listener
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ transmission_peer_port }}"
+    timeout: 30
+  when: transmission_start_service
+
+- name: Check File Browser interface
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ filebrowser_port }}/"
+    status_code: 200
+  register: filebrowser_health
+  retries: 30
+  delay: 2
+  until: filebrowser_health.status == 200
+  when: filebrowser_start_service

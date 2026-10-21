@@ -1,0 +1,148 @@
+---
+# Correct the backend clock while keeping the prepared notification disabled.
+- name: Apply UTC to the native Dependency-Track scheduler
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  vars_files: [../roles/dependency_track/defaults/main.yml]
+  vars:
+    dtrack_timezone_api: http://127.0.0.1:8081/api
+    dtrack_timezone_rule: "{{ lookup('file', playbook_dir + '/../files/dependency-track-notification-rule.json') | from_json }}"
+  pre_tasks:
+    - name: Read the existing backend unit before the bounded correction
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/dependency-track.service
+      register: dtrack_timezone_existing_unit
+      no_log: true
+    - name: Refuse unrelated backend unit changes during this correction
+      ansible.builtin.assert:
+        that: >-
+          ((dtrack_timezone_existing_unit.content | b64decode).replace('Environment=TZ=UTC', '').replace('-Duser.timezone=UTC ', '').splitlines() | reject('equalto', '') | list) ==
+          ((lookup('template', '../roles/dependency_track/templates/dependency-track.service.j2')).replace('Environment=TZ=UTC', '').replace('-Duser.timezone=UTC ', '').splitlines() | reject('equalto', '') | list)
+        fail_msg: The backend unit differs beyond timezone settings; review it before proceeding.
+      no_log: true
+    - name: Require the prepared n8n workflow to remain unpublished
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - >-
+            import sqlite3;
+            db=sqlite3.connect('file:/var/lib/n8n/.n8n/database.sqlite?mode=ro',uri=True);
+            row=db.execute('SELECT active FROM workflow_entity WHERE id=?',('homelabDTrackDaily',)).fetchone();
+            assert row is not None and not row[0], 'Prepared workflow must remain inactive'
+      delegate_to: n8n
+      changed_when: false
+    - name: Wait for all native workflow jobs to be idle and require the rule disabled
+      ansible.builtin.command:
+        argv: [python3, '-']
+        stdin: |
+          import json
+          from pathlib import Path
+          from urllib.parse import urlencode
+          from urllib.request import Request, build_opener, ProxyHandler
+          opener = build_opener(ProxyHandler({}))
+          base = 'http://127.0.0.1:8081/api'
+          admin = json.loads(Path('/root/.config/dependency-track/admin.json').read_text())
+          data = urlencode({'username': admin['username'], 'password': admin['password']}).encode()
+          with opener.open(Request(base + '/v1/user/login', data=data), timeout=30) as r:
+              token = r.read().decode().strip()
+          def get(path):
+              with opener.open(Request(base + path, headers={'Authorization': 'Bearer ' + token}), timeout=30) as r:
+                  return json.load(r)
+          rules = [r for r in get('/v1/notification/rule') if r['name'] == 'Homelab daily high and critical summary']
+          assert len(rules) == 1 and not rules[0]['enabled'], 'Prepared rule must remain disabled'
+          for status in ['CREATED', 'RUNNING', 'SUSPENDED']:
+              runs = get('/v2/internal/workflow-runs?' + urlencode({'status': status, 'limit': 1}))
+              assert not runs['items'], 'Native workflow jobs are not idle'
+          print('native_jobs_idle_and_rule_disabled')
+      no_log: true
+      changed_when: false
+      register: dtrack_timezone_idle
+      until: dtrack_timezone_idle.rc == 0
+      retries: 20
+      delay: 15
+  tasks:
+    - name: Install only the UTC backend service definition
+      ansible.builtin.template:
+        src: ../roles/dependency_track/templates/dependency-track.service.j2
+        dest: /etc/systemd/system/dependency-track.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: dtrack_timezone_service
+    - name: Restart only Dependency-Track after the idle check
+      ansible.builtin.systemd_service:
+        name: dependency-track.service
+        daemon_reload: true
+        state: restarted
+      when: dtrack_timezone_service.changed
+    - name: Wait for backend readiness after the timezone correction
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9000/health/ready
+        use_proxy: false
+      register: dtrack_timezone_health
+      until: dtrack_timezone_health.status == 200 and dtrack_timezone_health.json.status | default('') == 'UP'
+      retries: 60
+      delay: 2
+    - name: Verify the running JVM has the explicit UTC configuration
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import pathlib, subprocess
+            pid = subprocess.check_output(['systemctl', 'show', 'dependency-track.service', '--property=MainPID', '--value'], text=True).strip()
+            root = pathlib.Path('/proc') / pid
+            assert b'-Duser.timezone=UTC' in (root / 'cmdline').read_bytes().split(b'\0')
+            assert b'TZ=UTC' in (root / 'environ').read_bytes().split(b'\0')
+      changed_when: false
+    - name: Recompute the native schedule without enabling the rule
+      no_log: true
+      block:
+        - ansible.builtin.slurp:
+            src: /root/.config/dependency-track/admin.json
+          register: dtrack_timezone_admin
+        - ansible.builtin.uri:
+            url: "{{ dtrack_timezone_api }}/v1/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body:
+              username: "{{ (dtrack_timezone_admin.content | b64decode | from_json).username }}"
+              password: "{{ (dtrack_timezone_admin.content | b64decode | from_json).password }}"
+            return_content: true
+            use_proxy: false
+          register: dtrack_timezone_login
+        - ansible.builtin.uri:
+            url: "{{ dtrack_timezone_api }}/v1/notification/rule"
+            headers: {Authorization: "Bearer {{ dtrack_timezone_login.content }}"}
+            use_proxy: false
+          register: dtrack_timezone_rules
+        - ansible.builtin.set_fact:
+            dtrack_timezone_selected: "{{ dtrack_timezone_rules.json | selectattr('name', 'equalto', dtrack_timezone_rule.name) | list }}"
+        - ansible.builtin.assert:
+            that:
+              - dtrack_timezone_selected | length == 1
+              - not dtrack_timezone_selected[0].enabled
+        - ansible.builtin.uri:
+            url: "{{ dtrack_timezone_api }}/v1/notification/rule"
+            method: POST
+            headers: {Authorization: "Bearer {{ dtrack_timezone_login.content }}"}
+            body_format: json
+            body: "{{ dtrack_timezone_rule | combine({'uuid': dtrack_timezone_selected[0].uuid, 'enabled': false, 'publisherConfig': dtrack_timezone_selected[0].publisherConfig}) }}"
+            use_proxy: false
+          register: dtrack_timezone_updated
+        - ansible.builtin.assert:
+            that: not dtrack_timezone_updated.json.enabled
+        - ansible.builtin.set_fact:
+            dtrack_timezone_next_trigger: "{{ dtrack_timezone_updated.json.scheduleNextTriggerAt }}"
+    - name: Validate the disabled rule's actual native UTC timestamp
+      ansible.builtin.include_tasks: tasks/dependency-track-verify-trigger.yml
+      vars:
+        dtrack_verify_trigger_epoch_ms: "{{ dtrack_timezone_next_trigger }}"
+    - name: Report the timezone correction without activating notifications
+      ansible.builtin.debug:
+        msg:
+          runtime_timezone: UTC
+          notification_enabled: false
+          next_trigger_epoch_ms: "{{ dtrack_timezone_next_trigger }}"

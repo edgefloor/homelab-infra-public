@@ -1,0 +1,24 @@
+---
+- name: Reject central-scanner clients on containers below 200
+  ansible.builtin.assert:
+    that: item.name != inventory_hostname
+    fail_msg: Containers below 200 must not receive vulnerability monitoring.
+  loop: "{{ (lookup('file', role_path + '/../../../inventory/workloads.yml') | from_yaml).inventory.workloads | selectattr('id', 'lt', 200) | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Read the central scanner credential
+  ansible.builtin.slurp:
+    src: /etc/homelab-trivy/server.json
+  delegate_to: pangolin
+  register: trivy_client_credential
+  no_log: true
+
+- name: Install authenticated client configuration
+  ansible.builtin.copy:
+    content: "{{ {'server': {'addr': 'https://matrix.homelab.example/_trivy', 'token': (trivy_client_credential.content | b64decode | from_json).server.token}, 'db': {'skip-update': true}, 'scan': {'parallel': 1}} | to_json }}\n"
+    dest: /etc/homelab-update-monitor/trivy-client.json
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true

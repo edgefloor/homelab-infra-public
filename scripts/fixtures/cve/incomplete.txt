@@ -1,0 +1,9 @@
+CVE-2099-1000 | example / service-1 — assessment incomplete
+
+The service configuration was unavailable, so the handler could not be assessed.
+
+Deployment reachability could not be established.
+
+Resolve the blocked verification before choosing remediation.
+
+Evidence: 0123456789abcdef

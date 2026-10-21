@@ -1,0 +1,187 @@
+---
+- name: Install Hermes Agent runtime prerequisites
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - ca-certificates
+      - curl
+      - git
+      - libffi-dev
+      - python3-dev
+      - ripgrep
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the Hermes Agent group
+  ansible.builtin.group:
+    name: "{{ hermes_agent_group }}"
+    system: true
+
+- name: Create the Hermes Agent account
+  ansible.builtin.user:
+    name: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    home: "{{ hermes_agent_home }}"
+    shell: /bin/bash
+    password_lock: true
+    system: true
+    create_home: true
+
+- name: Create Hermes Agent deployment directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /var/cache/homelab-tools, owner: root, group: root, mode: '0755' }
+    - { path: "{{ hermes_agent_config_home }}", owner: "{{ hermes_agent_user }}", group: "{{ hermes_agent_group }}", mode: '0700' }
+
+- name: Download the pinned official Hermes Agent installer
+  ansible.builtin.get_url:
+    url: "{{ hermes_agent_installer_url }}"
+    dest: "/var/cache/homelab-tools/hermes-agent-install-{{ hermes_agent_version }}.sh"
+    checksum: "sha256:{{ hermes_agent_installer_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Read the deployed Hermes Agent source revision
+  ansible.builtin.command:
+    argv: [git, -C, "{{ hermes_agent_release_dir }}", rev-parse, HEAD]
+  register: installed_hermes_agent_revision
+  changed_when: false
+  failed_when: false
+
+- name: Inspect the Hermes Agent virtual environment
+  ansible.builtin.stat:
+    path: "{{ hermes_agent_release_dir }}/venv/bin/python"
+  register: hermes_agent_runtime
+
+- name: Inspect the Hermes Agent command
+  ansible.builtin.stat:
+    path: "{{ hermes_agent_command }}"
+  register: hermes_agent_launcher
+
+- name: Install the pinned official Hermes Agent release
+  ansible.builtin.command:
+    argv:
+      - bash
+      - "/var/cache/homelab-tools/hermes-agent-install-{{ hermes_agent_version }}.sh"
+      - --skip-setup
+      - --non-interactive
+      - --commit
+      - "{{ hermes_agent_commit }}"
+      - --force-commit
+      - --hermes-home
+      - "{{ hermes_agent_config_home }}"
+  register: hermes_agent_install
+  when: >-
+    installed_hermes_agent_revision.rc != 0 or
+    installed_hermes_agent_revision.stdout | trim != hermes_agent_commit or
+    not hermes_agent_runtime.stat.exists or
+    not hermes_agent_launcher.stat.exists
+
+- name: Keep Hermes Agent's mutable state with its service account
+  ansible.builtin.file:
+    path: "{{ hermes_agent_config_home }}"
+    state: directory
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: '0700'
+
+- name: Keep Hermes configuration backup directories writable by its service account
+  ansible.builtin.file:
+    path: "{{ hermes_agent_config_home }}/backups{{ item }}"
+    state: directory
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: '0700'
+  loop:
+    - ''
+    - /config
+
+- name: Find existing Hermes configuration backup files
+  ansible.builtin.find:
+    paths: "{{ hermes_agent_config_home }}/backups"
+    file_type: file
+    recurse: true
+  register: hermes_agent_backup_files
+
+- name: Keep Hermes configuration backups private and writable
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: '0600'
+  loop: "{{ hermes_agent_backup_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Install externally supplied general Hermes configuration
+  ansible.builtin.copy:
+    content: "{{ hermes_agent_config }}"
+    dest: "{{ hermes_agent_config_home }}/config.yaml"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: '0600'
+  when: hermes_agent_config | length > 0
+  no_log: true
+
+- name: Install externally supplied general Hermes environment
+  ansible.builtin.copy:
+    content: "{{ hermes_agent_environment }}"
+    dest: "{{ hermes_agent_config_home }}/.env"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: '0600'
+  when: hermes_agent_environment | length > 0
+  no_log: true
+
+- name: Install externally supplied general Hermes authentication
+  ansible.builtin.copy:
+    content: "{{ hermes_agent_auth }}"
+    dest: "{{ hermes_agent_config_home }}/auth.json"
+    owner: "{{ hermes_agent_user }}"
+    group: "{{ hermes_agent_group }}"
+    mode: '0600'
+  when: hermes_agent_auth | length > 0
+  no_log: true
+
+- name: Verify the pinned Hermes Agent source revision
+  ansible.builtin.command:
+    argv: [git, -C, "{{ hermes_agent_release_dir }}", rev-parse, HEAD]
+  register: hermes_agent_revision
+  changed_when: false
+  failed_when: hermes_agent_revision.stdout | trim != hermes_agent_commit
+
+- name: Restore declared native Hermes feature dependencies after installation
+  ansible.builtin.include_tasks: features.yml
+
+- name: Inspect the existing gateway after Hermes changes
+  ansible.builtin.stat:
+    path: /etc/systemd/system/hermes-gateway.service
+  register: hermes_repaired_gateway
+  when: hermes_agent_install.changed or hermes_feature_restore.changed | default(false)
+
+- name: Preserve the provisioned-profile onboarding switch after Hermes upgrades
+  ansible.builtin.script: "configure_gateway_onboarding.py {{ hermes_agent_release_dir }}/gateway/run_turn.py"
+  register: hermes_onboarding_patch
+  changed_when: "'updated' in hermes_onboarding_patch.stdout"
+
+- name: Reload an existing gateway after Hermes changes
+  ansible.builtin.command: systemctl try-restart hermes-gateway.service
+  when:
+    - hermes_agent_install.changed or hermes_feature_restore.changed | default(false)
+    - hermes_repaired_gateway.stat.exists | default(false)
+
+- name: Verify the deployed Hermes Agent command
+  become_user: "{{ hermes_agent_user }}"
+  ansible.builtin.command:
+    argv: ["{{ hermes_agent_command }}", --version]
+  environment:
+    HOME: "{{ hermes_agent_home }}"
+    HERMES_HOME: "{{ hermes_agent_config_home }}"
+  changed_when: false

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "homelab-tofu: root execution from a reviewed provisioning directory is required" >&2
+  exit 77
+fi
+umask 077
+
+set -a
+. /etc/homelab-tofu-proxmox.env
+set +a
+
+exec /usr/bin/tofu "$@"

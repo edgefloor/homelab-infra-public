@@ -1,0 +1,20 @@
+{{ {
+  'system': inventory_hostname,
+  'url': sbom_upload_url,
+  'resolve': sbom_upload_resolve,
+  'parent_uuid': (sbom_upload_portfolio.content | b64decode | from_json).uuid,
+  'header_file': sbom_upload_config_dir + '/api-header',
+  'trivy': '/opt/homelab-trivy-' + sbom_trivy_defaults.update_monitor_trivy_version + '/trivy',
+  'state': sbom_upload_state_dir + '/status.json',
+  'cache_dir': sbom_upload_cache_dir,
+  'cache_max_bytes': sbom_upload_cache_max_bytes,
+  'minimum_free_bytes': sbom_upload_min_free_bytes,
+  'scan_timeout_seconds': sbom_upload_scan_timeout_seconds,
+  'max_age_seconds': sbom_upload_max_age_seconds,
+  'go_binaries': sbom_upload_go_binaries,
+  'libraries': sbom_runtime.systems[inventory_hostname].libraries | rejectattr('deployment', 'in', sbom_upload_retired_deployments) | list,
+  'vendor_boms': sbom_upload_vendor_boms,
+  'source_locks': sbom_runtime.systems[inventory_hostname].source_locks | default({}),
+  'retired_containers': sbom_upload_retired_containers,
+  'skip_dirs': sbom_upload_skip_dirs
+} | to_nice_json }}

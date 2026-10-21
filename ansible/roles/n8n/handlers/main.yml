@@ -1,0 +1,6 @@
+---
+- name: Restart n8n
+  ansible.builtin.systemd_service:
+    name: n8n.service
+    state: restarted
+    daemon_reload: true

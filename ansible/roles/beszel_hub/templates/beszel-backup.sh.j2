@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+install_dir={{ beszel_install_dir | quote }}
+data_dir={{ beszel_data_dir | quote }}
+backup_dir={{ beszel_backup_dir | quote }}
+retention_days={{ beszel_backup_retention_days | quote }}
+
+if [ -z "$(docker ps --quiet --filter name='^/beszel$')" ]; then
+    exit 0
+fi
+
+install -d -m 0700 "$backup_dir"
+archive="$backup_dir/beszel-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+temporary_archive=$(mktemp "$backup_dir/.beszel-backup.XXXXXX")
+
+restart_beszel() {
+    docker start beszel >/dev/null
+    rm -f "$temporary_archive"
+}
+
+docker stop --time 30 beszel >/dev/null
+trap restart_beszel EXIT HUP INT TERM
+
+tar --numeric-owner -C "$install_dir" -czf "$temporary_archive" "${data_dir#"$install_dir"/}"
+chmod 0600 "$temporary_archive"
+mv "$temporary_archive" "$archive"
+
+docker start beszel >/dev/null
+trap - EXIT HUP INT TERM
+
+find "$backup_dir" -type f -name 'beszel-*.tar.gz' -mtime "+$retention_days" -delete

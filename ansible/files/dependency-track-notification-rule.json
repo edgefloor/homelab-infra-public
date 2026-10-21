@@ -1,0 +1,15 @@
+{
+  "name": "Homelab daily high and critical summary",
+  "enabled": false,
+  "notifyChildren": true,
+  "logSuccessfulPublish": true,
+  "scope": "PORTFOLIO",
+  "level": "INFORMATIONAL",
+  "notifyOn": [
+    "NEW_VULNERABILITIES_SUMMARY"
+  ],
+  "scheduleCron": "0 8 * * *",
+  "scheduleSkipUnchanged": true,
+  "filterExpression": "subject.overview.new_vulnerabilities_count_by_severity.exists(s, s in [\"CRITICAL\", \"HIGH\"] && subject.overview.new_vulnerabilities_count_by_severity[s] > 0)",
+  "tags": []
+}

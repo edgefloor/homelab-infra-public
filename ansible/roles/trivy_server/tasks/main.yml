@@ -1,0 +1,75 @@
+---
+- name: Require the pinned scanner installed by update_monitor
+  ansible.builtin.command: /usr/local/bin/trivy --version
+  register: shared_trivy_version
+  changed_when: false
+  failed_when: "'Version: 0.74.0' not in shared_trivy_version.stdout"
+
+- name: Create the dedicated matcher account
+  ansible.builtin.user:
+    name: homelab-trivy
+    system: true
+    home: /nonexistent
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Create private matcher directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: '0700'
+  loop:
+    - {path: /etc/homelab-trivy, owner: root}
+    - {path: /var/cache/homelab-trivy, owner: homelab-trivy}
+
+- name: Generate the dedicated scanner token once on the server
+  ansible.builtin.shell: |
+    umask 077
+    python3 -c 'import json,secrets; print(json.dumps({"server": {"token": secrets.token_hex(32)}}))' > /etc/homelab-trivy/server.json
+  args:
+    creates: /etc/homelab-trivy/server.json
+  no_log: true
+
+- name: Read the scanner credential for this deployment only
+  ansible.builtin.slurp:
+    src: /etc/homelab-trivy/server.json
+  register: shared_trivy_credential
+  no_log: true
+
+- name: Require authentication in the pinned Trivy configuration schema
+  ansible.builtin.assert:
+    that:
+      - (shared_trivy_credential.content | b64decode | from_json).server.token | length >= 32
+  no_log: true
+
+- name: Install the bounded central matcher
+  ansible.builtin.template:
+    src: homelab-trivy.service.j2
+    dest: /etc/systemd/system/homelab-trivy.service
+    mode: '0644'
+  register: shared_trivy_unit
+
+- name: Start central vulnerability matching
+  ansible.builtin.systemd_service:
+    name: homelab-trivy.service
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if shared_trivy_unit.changed else 'started' }}"
+
+- name: Wait for the database to load
+  ansible.builtin.uri:
+    url: http://172.30.0.1:4954/healthz
+  register: shared_trivy_health
+  until: shared_trivy_health.status == 200
+  retries: 120
+  delay: 5
+
+- name: Require authenticated RPC before exposing the matcher through HTTPS
+  ansible.builtin.uri:
+    url: http://172.30.0.1:4954/twirp/trivy.scanner.v1.Scanner/Scan
+    method: POST
+    body_format: json
+    body: {}
+    status_code: 401

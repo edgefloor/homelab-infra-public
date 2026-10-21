@@ -1,0 +1,6 @@
+---
+- name: Run Cloudflare DDNS
+  ansible.builtin.systemd_service:
+    name: cloudflare-ddns.service
+    state: started
+    daemon_reload: true

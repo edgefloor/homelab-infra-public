@@ -1,0 +1,20 @@
+---
+schema_version: 1
+id: filebrowser
+name: File Browser
+upstream:
+  repository: https://github.com/filebrowser/filebrowser
+  release: v2.63.23
+  commit: e8a388f840173580116f2743813d03b22286e44e
+  distribution: official_binary
+runtime: native_systemd
+environments:
+  staging: { target: downloads, status: migrated_and_validated }
+  production: { target: downloads, status: active_via_caddy }
+routing: { caddy: lan, pangolin: none }
+health:
+  local_url: http://127.0.0.1:8080/
+  expected_units: [filebrowser.service]
+state:
+  paths: [/var/lib/filebrowser/filebrowser.db, /storage]
+  backup_required_before_cutover: true

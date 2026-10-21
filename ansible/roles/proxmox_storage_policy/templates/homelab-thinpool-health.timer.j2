@@ -1,0 +1,11 @@
+[Unit]
+Description=Check thin-pool capacity hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+Unit=homelab-thinpool-health.service
+
+[Install]
+WantedBy=timers.target

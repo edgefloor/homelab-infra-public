@@ -1,0 +1,7 @@
+---
+- name: Configure bounded Proxmox thin-pool extension
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  roles:
+    - proxmox_storage_policy

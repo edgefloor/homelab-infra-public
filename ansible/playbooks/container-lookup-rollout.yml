@@ -1,0 +1,68 @@
+---
+- name: Keep operational investigations disabled while preserving lookup diagnostics
+  hosts: hermes_agents
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stop and disable the normal worker
+      ansible.builtin.systemd_service:
+        name: zag-ops-worker.service
+        state: stopped
+        enabled: false
+    - name: Install bounded evidence and structured failure presentation
+      ansible.builtin.copy:
+        src: "../roles/vulnerability_incidents/files/{{ item }}.py"
+        dest: "/usr/local/lib/zag-ops/{{ item }}.py"
+        mode: '0644'
+        backup: true
+      loop: [zag_ops_worker, investigation_evidence]
+    - name: Install snapshot-bound artifact client
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_service/files/homelab_agentctl.py
+        dest: /usr/local/bin/homelab-agentctl
+        mode: '0755'
+        backup: true
+
+- name: Update container lookup on managed evidence targets
+  hosts: beszel_agents:plan_runners
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  become: true
+  gather_facts: false
+  serial: 3
+  tasks:
+    - name: Reject containers below 200 at deployment
+      ansible.builtin.assert:
+        that: inventory_hostname != item.name
+        quiet: true
+      loop: "{{ (lookup('file', '../../inventory/workloads.yml') | from_yaml).inventory.workloads | selectattr('id', 'lt', 200) | list }}"
+      loop_control:
+        label: "{{ item.id }}"
+    - name: Install structured runtime lookup
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_target/files/homelab_evidence_gateway.py
+        dest: /usr/local/libexec/homelab-evidence-gateway
+        mode: '0755'
+        backup: true
+    - name: Install bounded artifact proof and replacement readers
+      ansible.builtin.include_role:
+        name: homelab_agent_target
+        tasks_from: artifact_tools
+    - name: Preserve one container binding per scanner occurrence
+      ansible.builtin.copy:
+        src: ../roles/update_monitor/files/homelab_incident_snapshot.py
+        dest: /usr/local/libexec/homelab_incident_snapshot.py
+        mode: '0755'
+        backup: true
+    - name: Verify Python syntax without executing a lookup
+      ansible.builtin.command:
+        argv: [python3, -c, "from pathlib import Path; p='/usr/local/libexec/homelab-evidence-gateway'; compile(Path(p).read_text(), p, 'exec')"]
+      changed_when: false

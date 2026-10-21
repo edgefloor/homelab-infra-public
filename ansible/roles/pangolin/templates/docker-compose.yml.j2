@@ -1,0 +1,185 @@
+name: pangolin
+
+services:
+  pangolin:
+    image: {{ pangolin_image }}
+    container_name: pangolin
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 512m
+    volumes:
+      - ./config:/app/config
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/v1/"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+
+  alagut-management-site:
+    image: {{ pangolin_management_newt_image }}
+    platform: linux/amd64
+    network_mode: service:pangolin
+    restart: unless-stopped
+    command: ["newt"]
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    environment:
+      CONFIG_FILE: /run/secrets/alagut-management-site
+    secrets:
+      - alagut-management-site
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  gerbil:
+    image: {{ gerbil_image }}
+    container_name: gerbil
+    restart: unless-stopped
+    depends_on:
+      pangolin:
+        condition: service_healthy
+    command:
+      - --reachableAt=http://gerbil:3004
+      - --generateAndSaveKeyTo=/var/config/key
+      - --remoteConfig=http://pangolin:3001/api/v1/
+    volumes:
+      - ./config:/var/config
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    ports:
+      - 51820:51820/udp
+      - 21820:21820/udp
+      - {{ matrix_rtc_turn_tls_port }}:{{ matrix_rtc_turn_tls_port }}/tcp
+      - 443:443
+      - 443:443/udp
+      - 80:80
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3004/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      default: {}
+      pangolin_fallback:
+        ipv4_address: {{ pangolin_fallback_proxy_address }}
+
+  crowdsec:
+    image: {{ crowdsec_image }}
+    container_name: crowdsec
+    restart: unless-stopped
+    environment:
+      COLLECTIONS: crowdsecurity/traefik crowdsecurity/linux
+    ports:
+      - 127.0.0.1:8080:8080
+    volumes:
+      - ./config/crowdsec:/etc/crowdsec
+      - ./config/crowdsec/data:/var/lib/crowdsec/data
+      - ./config/traefik/logs:/var/log/traefik:ro
+      - /var/log/journal:/var/log/host:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  rickroll-fallback:
+    build:
+      context: ./rickroll
+    image: {{ pangolin_fallback_image }}
+    container_name: pangolin-rickroll-fallback
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.25
+    dns:
+      - 127.0.0.1
+    dns_opt:
+      - attempts:1
+      - timeout:1
+    networks:
+      pangolin_fallback:
+        ipv4_address: {{ pangolin_fallback_address }}
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - >-
+          const r=await fetch('http://127.0.0.1:3000/');
+          const b=await r.text();
+          process.exit(r.status===404&&b.includes('Definitely Not a Rickroll')?0:1)
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  traefik:
+    image: {{ traefik_image }}
+    container_name: traefik
+    restart: unless-stopped
+    network_mode: service:gerbil
+    depends_on:
+      pangolin:
+        condition: service_healthy
+      gerbil:
+        condition: service_healthy
+      crowdsec:
+        condition: service_healthy
+    command:
+      - --configFile=/etc/traefik/traefik_config.yml
+    environment:
+      CF_DNS_API_TOKEN_FILE: /run/secrets/cloudflare_dns_api_token
+    volumes:
+      - ./config/traefik:/etc/traefik:ro
+      - ./config/letsencrypt:/letsencrypt
+      - ./config/traefik/logs:/var/log/traefik
+      - /etc/pangolin-crowdsec-traefik-key:/run/secrets/crowdsec_traefik_key:ro
+      - {{ pangolin_cloudflare_dns_token_file }}:/run/secrets/cloudflare_dns_api_token:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  default:
+    driver: bridge
+    name: pangolin_frontend
+  pangolin_fallback:
+    driver: bridge
+    name: pangolin_fallback
+    internal: true
+    ipam:
+      config:
+        - subnet: {{ pangolin_fallback_subnet }}
+          gateway: {{ pangolin_fallback_gateway }}
+
+secrets:
+  alagut-management-site:
+    file: {{ pangolin_management_newt_file }}

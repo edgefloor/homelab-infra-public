@@ -1,0 +1,21 @@
+#!/usr/sbin/nft -f
+flush ruleset
+
+table inet helix_filter {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    ct state established,related accept
+    iifname "lo" accept
+    ip protocol icmp accept
+    ip6 nexthdr ipv6-icmp accept
+    ip saddr {{ cve_helix_allowed_subnet }} tcp dport { 22, {{ cve_helix_http_port }} } accept
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy accept;
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+  }
+}

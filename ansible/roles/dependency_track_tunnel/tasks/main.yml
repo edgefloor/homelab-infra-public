@@ -1,0 +1,154 @@
+---
+- name: Install the native SSH client
+  ansible.builtin.apt:
+    name: openssh-client
+    state: present
+
+- name: Create a dedicated local tunnel account
+  ansible.builtin.user:
+    name: "{{ dependency_track_tunnel_client_user }}"
+    system: true
+    home: "/var/lib/{{ dependency_track_tunnel_client_user }}"
+    create_home: true
+    shell: /usr/sbin/nologin
+
+- name: Restrict the local tunnel home
+  ansible.builtin.file:
+    path: "/var/lib/{{ dependency_track_tunnel_client_user }}"
+    owner: "{{ dependency_track_tunnel_client_user }}"
+    group: "{{ dependency_track_tunnel_client_user }}"
+    mode: '0700'
+
+- name: Generate a separate upload tunnel key
+  ansible.builtin.command:
+    argv: [ssh-keygen, -q, -t, ed25519, -N, '', -C, dependency-track-upload, -f, "/var/lib/{{ dependency_track_tunnel_client_user }}/id_ed25519"]
+    creates: "/var/lib/{{ dependency_track_tunnel_client_user }}/id_ed25519"
+
+- name: Protect the upload tunnel identity
+  ansible.builtin.file:
+    path: "/var/lib/{{ dependency_track_tunnel_client_user }}/{{ item.name }}"
+    owner: "{{ dependency_track_tunnel_client_user }}"
+    group: "{{ dependency_track_tunnel_client_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { name: id_ed25519, mode: '0600' }
+    - { name: id_ed25519.pub, mode: '0644' }
+
+- name: Read only the tunnel public key
+  ansible.builtin.slurp:
+    src: "/var/lib/{{ dependency_track_tunnel_client_user }}/id_ed25519.pub"
+  register: dependency_track_tunnel_public_key
+
+- name: Configure the dedicated remote forwarding account
+  delegate_to: "{{ dependency_track_tunnel_edge_host }}"
+  block:
+    - name: Create the locked VPS account
+      ansible.builtin.user:
+        name: "{{ dependency_track_tunnel_edge_user }}"
+        system: true
+        home: "/var/lib/{{ dependency_track_tunnel_edge_user }}"
+        create_home: true
+        shell: /bin/false
+        password_lock: true
+
+    - name: Make the VPS authorization directory root-owned
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "/var/lib/{{ dependency_track_tunnel_edge_user }}"
+        - "/var/lib/{{ dependency_track_tunnel_edge_user }}/.ssh"
+
+    - name: Authorize only the dedicated loopback listener
+      ansible.builtin.copy:
+        content: 'restrict,port-forwarding,permitlisten="127.0.0.1:{{ dependency_track_tunnel_edge_port }}",command="/bin/false" {{ dependency_track_tunnel_public_key.content | b64decode | trim }}'
+        dest: "/var/lib/{{ dependency_track_tunnel_edge_user }}/.ssh/authorized_keys"
+        owner: root
+        group: root
+        mode: '0644'
+      register: dependency_track_tunnel_authorization
+
+    - name: Restrict all SSH capabilities of the forwarding account
+      ansible.builtin.template:
+        src: sshd.conf.j2
+        dest: /etc/ssh/sshd_config.d/60-dependency-track-upload.conf
+        owner: root
+        group: root
+        mode: '0644'
+      register: dependency_track_tunnel_sshd_config
+
+    - name: Validate the complete SSH server configuration
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -t]
+      changed_when: false
+
+    - name: Inspect the effective forwarding restrictions
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -T, -C, "user={{ dependency_track_tunnel_edge_user }},host=localhost,addr=127.0.0.1"]
+      register: dependency_track_tunnel_effective_sshd
+      changed_when: false
+      failed_when: >-
+        'allowtcpforwarding remote' not in dependency_track_tunnel_effective_sshd.stdout_lines or
+        'permitlisten 127.0.0.1:' ~ (dependency_track_tunnel_edge_port | string) not in dependency_track_tunnel_effective_sshd.stdout_lines or
+        'gatewayports no' not in dependency_track_tunnel_effective_sshd.stdout_lines or
+        'maxsessions 0' not in dependency_track_tunnel_effective_sshd.stdout_lines or
+        'passwordauthentication no' not in dependency_track_tunnel_effective_sshd.stdout_lines
+
+    - name: Reload SSH after validated account restrictions
+      ansible.builtin.systemd_service:
+        name: ssh.service
+        state: reloaded
+      when: dependency_track_tunnel_sshd_config.changed
+
+    - name: Read the VPS host identity over the existing trusted Ansible connection
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: dependency_track_tunnel_host_key
+
+- name: Pin the verified VPS SSH host key
+  ansible.builtin.copy:
+    content: "{{ dependency_track_tunnel_edge_address }} {{ dependency_track_tunnel_host_key.content | b64decode | trim }}\n"
+    dest: "/var/lib/{{ dependency_track_tunnel_client_user }}/known_hosts"
+    owner: "{{ dependency_track_tunnel_client_user }}"
+    group: "{{ dependency_track_tunnel_client_user }}"
+    mode: '0600'
+  register: dependency_track_tunnel_known_hosts
+
+- name: Install the independent upload tunnel service
+  ansible.builtin.template:
+    src: dependency-track-upload-tunnel.service.j2
+    dest: /etc/systemd/system/dependency-track-upload-tunnel.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: dependency_track_tunnel_unit
+
+- name: Start the dedicated upload tunnel
+  ansible.builtin.systemd_service:
+    name: dependency-track-upload-tunnel.service
+    daemon_reload: true
+    enabled: true
+    state: "{{ 'restarted' if dependency_track_tunnel_unit.changed or dependency_track_tunnel_known_hosts.changed or dependency_track_tunnel_authorization.changed or dependency_track_tunnel_sshd_config.changed else 'started' }}"
+
+- name: Verify the private API still requires authentication through the VPS forward
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dependency_track_tunnel_edge_port }}/api/v1/project?pageSize=1"
+    status_code: 401
+  delegate_to: "{{ dependency_track_tunnel_edge_host }}"
+  register: dependency_track_tunnel_health
+  retries: 15
+  delay: 2
+  until: dependency_track_tunnel_health.status == 401
+
+- name: Verify the upload listener is bound only to VPS loopback
+  ansible.builtin.command:
+    argv: [ss, -H, -ltn, "sport = :{{ dependency_track_tunnel_edge_port }}"]
+  delegate_to: "{{ dependency_track_tunnel_edge_host }}"
+  register: dependency_track_tunnel_listener
+  changed_when: false
+  failed_when: >-
+    dependency_track_tunnel_listener.stdout_lines | length != 1 or
+    dependency_track_tunnel_listener.stdout.split()[3] != '127.0.0.1:' ~ (dependency_track_tunnel_edge_port | string)

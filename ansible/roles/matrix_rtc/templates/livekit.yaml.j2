@@ -1,0 +1,23 @@
+port: {{ matrix_rtc_livekit_port }}
+bind_addresses:
+  - ""
+rtc:
+  tcp_port: {{ matrix_rtc_tcp_port }}
+  udp_port: {{ matrix_rtc_udp_port }}
+  use_external_ip: false
+  node_ip: "{{ matrix_rtc_public_ip }}"
+  enable_loopback_candidate: false
+room:
+  auto_create: false
+turn:
+  enabled: true
+  udp_port: {{ matrix_rtc_turn_udp_port }}
+  tls_port: {{ matrix_rtc_turn_tls_port }}
+  relay_range_start: {{ matrix_rtc_turn_relay_start }}
+  relay_range_end: {{ matrix_rtc_turn_relay_end }}
+  external_tls: true
+  domain: "{{ matrix_rtc_hostname }}"
+webhook:
+  api_key: "{{ matrix_rtc_livekit_key }}"
+  urls:
+    - "http://host.docker.internal:{{ matrix_rtc_jwt_port }}/sfu_webhook"

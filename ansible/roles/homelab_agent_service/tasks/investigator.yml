@@ -1,0 +1,167 @@
+---
+- name: Create the capability's private workspace root
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0750'
+    owner: "{{ homelab_agent_hermes_user }}"
+    group: "{{ homelab_agent_hermes_group }}"
+  loop:
+    - "{{ homelab_investigation_execution.capability_state }}"
+    - "{{ homelab_investigation_execution.capability_state }}/work"
+    - "{{ homelab_investigation_execution.capability_state }}/.ssh"
+
+- name: Check the general Hermes Agent configuration
+  ansible.builtin.stat:
+    path: "{{ homelab_agent_hermes_home }}/config.yaml"
+  register: hermes_agent_configuration
+
+- name: Require the independently supplied general Hermes configuration
+  ansible.builtin.assert:
+    that:
+      - hermes_agent_configuration.stat.isreg | default(false)
+    fail_msg: >-
+      Supply the general Hermes configuration through the Hermes deployment;
+      the homelab-oncall capability does not select its provider, model, personality, or tools.
+
+- name: Create the Hermes skill directory if the existing profile lacks it
+  ansible.builtin.file:
+    path: "{{ homelab_agent_hermes_home }}/skills"
+    state: directory
+    owner: "{{ homelab_agent_hermes_user }}"
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0700'
+
+- name: Pin SSH host keys obtained through the operator connection
+  ansible.builtin.copy:
+    content: |
+      {% for host in groups['homelab_agent_targets'] | unique | sort %}
+      {{ hostvars[host].ansible_host }} {{ hostvars[host].homelab_target_ssh_host_key.content | b64decode | trim }}
+      {% endfor %}
+    dest: "{{ homelab_agent_known_hosts }}"
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0640'
+
+- name: Create investigator configuration
+  ansible.builtin.file:
+    path: /etc/homelab-investigator
+    state: directory
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0750'
+
+- name: Publish non-secret capability targets
+  ansible.builtin.copy:
+    src: /tmp/homelab-security-config/agent-targets.json
+    dest: /etc/homelab-investigator/targets.json
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0640'
+
+- name: Publish the expected fleet denominator
+  ansible.builtin.copy:
+    content: "{{ (lookup('file', '/tmp/homelab-security-config/agent-targets.json') | from_json).keys() | list | sort | to_json }}\n"
+    dest: /etc/homelab-investigator/coverage-systems.json
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0640'
+
+- name: Remove the retired nested incident communication skill
+  ansible.builtin.file:
+    path: "{{ homelab_agent_hermes_home }}/skills/homelab-oncall/incident-communication"
+    state: absent
+
+- name: Install the managed homelab on-call skill
+  ansible.builtin.copy:
+    src: hermes-skills/homelab-oncall/
+    dest: "{{ homelab_agent_hermes_home }}/skills/homelab-oncall/"
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: preserve
+
+- name: Archive current non-ignored source without changing the operator index
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os, subprocess, tempfile
+        with tempfile.TemporaryDirectory(prefix='homelab-source-') as temp:
+            env = {**os.environ, 'GIT_INDEX_FILE': temp + '/index'}
+            def git(*args):
+                return subprocess.check_output(['git', *args], env=env, text=True).strip()
+            git('read-tree', 'HEAD')
+            git('add', '-A', '--', '.')
+            tree = git('write-tree')
+            git('archive', '--format=tar', '--output=/tmp/homelab-investigator-repository.tar', tree)
+            print(tree)
+    chdir: "{{ role_path }}/../../.."
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  register: investigator_source_tree
+
+- name: Read the archived source revision
+  ansible.builtin.command:
+    argv: [git, rev-parse, HEAD]
+    chdir: "{{ role_path }}/../../.."
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  register: investigator_source_revision
+
+- name: Create the versioned source directory
+  ansible.builtin.file:
+    path: "/etc/homelab-investigator/source-{{ investigator_source_tree.stdout }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the current source snapshot
+  ansible.builtin.unarchive:
+    src: /tmp/homelab-investigator-repository.tar
+    dest: "/etc/homelab-investigator/source-{{ investigator_source_tree.stdout }}"
+    owner: root
+    group: root
+    creates: "/etc/homelab-investigator/source-{{ investigator_source_tree.stdout }}/SOURCE_REVISION"
+
+- name: Record source identity
+  ansible.builtin.copy:
+    content: "base_commit={{ investigator_source_revision.stdout }}\nworking_tree={{ investigator_source_tree.stdout }}\n"
+    dest: "/etc/homelab-investigator/source-{{ investigator_source_tree.stdout }}/SOURCE_REVISION"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Select the source snapshot for new investigations
+  ansible.builtin.file:
+    src: "/etc/homelab-investigator/source-{{ investigator_source_tree.stdout }}"
+    dest: /etc/homelab-investigator/repository
+    state: link
+    force: true
+
+- name: Remove capability-owned memory and recursive-agent artifacts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/homelab-memoryctl
+    - /etc/homelab-investigator/honcho.json
+
+- name: Verify the Hermes runtime
+  become_user: "{{ homelab_agent_hermes_user }}"
+  ansible.builtin.command:
+    argv: ["{{ homelab_agent_hermes_command }}", --version]
+    chdir: "{{ homelab_agent_hermes_account_home }}"
+  environment:
+    HOME: "{{ homelab_agent_hermes_account_home }}"
+    HERMES_HOME: "{{ homelab_agent_hermes_home }}"
+  changed_when: false
+
+- name: Verify the native capability target inventory
+  become_user: "{{ homelab_agent_hermes_user }}"
+  ansible.builtin.command:
+    argv: [/usr/local/bin/homelab-agentctl, list]
+  changed_when: false

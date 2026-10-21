@@ -1,0 +1,63 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+backup_dir={{ incident_backup_receiver_dir | quote }}
+config_dir={{ incident_backup_receiver_config_dir | quote }}
+max_bytes={{ incident_backup_max_bytes }}
+min_free_bytes={{ incident_backup_min_free_bytes }}
+helper=/usr/local/libexec/homelab-backup-limits
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+
+prune() {
+  python3 "$helper" prune "$backup_dir" --keep {{ incident_backup_keep_per_source }} \
+    --maximum "$max_bytes" --minimum-free "$min_free_bytes"
+}
+
+receive() (
+  # This subshell deliberately restores errexit while the caller records failures.
+  set -e
+  name=$1 host=$2 verify=$3
+  work=$(mktemp -d "$backup_dir/.receive-$name.XXXXXX")
+  trap 'rm -rf -- "$work"' EXIT
+  trap 'exit 1' HUP INT TERM
+  partial="$work/archive.partial"
+  final="$backup_dir/$name-$stamp.tar.zst.age"
+  test ! -e "$final"
+  available=$(python3 "$helper" budget "$backup_dir" --maximum "$max_bytes" --minimum-free "$min_free_bytes")
+  ssh -T \
+    -i "$config_dir/id_ed25519" \
+    -o BatchMode=yes \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=yes \
+    -o ConnectTimeout=30 \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -o UserKnownHostsFile="$config_dir/known_hosts" \
+    {{ incident_backup_source_user | quote }}@"$host" \
+    | age --encrypt -R "$config_dir/age-recipient.txt" \
+    | python3 "$helper" write "$partial" --maximum "$available" --minimum-free "$min_free_bytes"
+  age --decrypt -i "$config_dir/age-identity.txt" "$partial" | zstd --test --quiet
+  if [[ "$verify" == true ]]; then
+    mkdir "$work/verify"
+    age --decrypt -i "$config_dir/age-identity.txt" "$partial" | zstd --decompress --stdout \
+      | python3 "$helper" verify "$work/verify" --minimum-free "$min_free_bytes"
+  fi
+  mv "$partial" "$final"
+)
+
+python3 "$helper" clean "$backup_dir"
+prune
+status=0
+{% for source in incident_backup_sources %}
+# Each source succeeds or fails independently; errors never skip later sources or retention.
+set +e
+receive {{ source.name | quote }} {{ source.host | quote }} {{ (source.verify_sqlite | default(false) | bool | string | lower) | quote }}
+source_status=$?
+set -e
+if (( source_status != 0 )); then
+  status=1
+fi
+prune || status=1
+{% endfor %}
+exit "$status"

@@ -1,0 +1,12 @@
+---
+- name: Bootstrap the dedicated Hermes Agent guest
+  hosts: hermes_agents
+  become: true
+  vars:
+    hermes_agent_config: "{{ lookup('env', 'HERMES_AGENT_CONFIG') }}"
+    hermes_agent_environment: "{{ lookup('env', 'HERMES_AGENT_ENV') }}"
+    hermes_agent_auth: "{{ lookup('env', 'HERMES_AGENT_AUTH') }}"
+  roles:
+    - common_baseline
+    - hermes_agent
+    - homelab_agent

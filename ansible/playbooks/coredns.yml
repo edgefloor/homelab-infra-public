@@ -1,0 +1,8 @@
+---
+- name: Configure the internal DNS resolver and advertising filter
+  hosts: network_ops
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  roles:
+    - coredns

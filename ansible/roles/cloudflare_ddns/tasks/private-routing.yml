@@ -1,0 +1,37 @@
+---
+- name: Derive canonical DNS route facts
+  ansible.builtin.include_tasks: route-facts.yml
+
+- name: Check the existing Cloudflare DDNS environment file
+  ansible.builtin.stat:
+    path: "{{ cloudflare_ddns_environment_file }}"
+  register: cloudflare_ddns_environment
+
+- name: Require the existing protected DNS credential
+  ansible.builtin.assert:
+    that:
+      - cloudflare_ddns_environment.stat.exists
+      - cloudflare_ddns_environment.stat.isreg
+      - cloudflare_ddns_environment.stat.pw_name == 'root'
+      - cloudflare_ddns_environment.stat.mode == '0600'
+
+- name: Install declarative private-hostname fallback DNS reconciliation
+  ansible.builtin.template:
+    src: cloudflare-ddns.py.j2
+    dest: /usr/local/libexec/cloudflare-ddns
+    owner: root
+    group: root
+    mode: '0755'
+    validate: /usr/bin/python3 -c "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" %s
+
+- name: Reconcile authoritative DNS now
+  ansible.builtin.systemd_service:
+    name: cloudflare-ddns.service
+    state: started
+
+- name: Verify DNS reconciliation completed successfully
+  ansible.builtin.command:
+    argv: [systemctl, show, cloudflare-ddns.service, '--property=Result', --value]
+  register: cloudflare_private_dns_result
+  changed_when: false
+  failed_when: cloudflare_private_dns_result.stdout != 'success'

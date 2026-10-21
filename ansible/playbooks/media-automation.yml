@@ -1,0 +1,14 @@
+---
+- name: Configure the media automation target
+  hosts: media_automation
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, seerr, servarr, shelfmark]
+        cve_provisioning_installations:
+          - "deployment:seerr"
+          - "deployment:radarr"
+          - "deployment:sonarr"
+          - "deployment:prowlarr"
+          - "deployment:shelfmark"

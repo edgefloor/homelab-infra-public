@@ -1,0 +1,29 @@
+---
+schema_version: 1
+id: searxng
+name: SearXNG
+upstream:
+  repository: https://github.com/searxng/searxng
+  release: 2026.9.20-2e624bed4
+  commit: 2e624bed40eb97b46faa98094a0b74d3ececd93d
+  distribution: official_container_and_packages
+runtime: docker_compose
+environments:
+  staging: { target: firecrawl, status: deployed_and_validated }
+  production: { target: firecrawl, status: active_lan_and_firecrawl_backend }
+routing: { caddy: lan, pangolin: none }
+health:
+  local_url: https://searxng.homelab.example/healthz
+  expected_units: [docker.service, firecrawl.service]
+state:
+  paths: [/opt/firecrawl/runtime/searxng/settings.yml, /var/lib/docker/volumes/firecrawl_searxng-cache]
+  backup_required_before_cutover: false
+provisioning:
+  source: fresh_managed_guest
+  import_external_workload_state: false
+containerization:
+  reason: SearXNG shares Firecrawl's isolated Compose network so the search backend is not coupled to a host-language runtime.
+network:
+  exposure: lan_only_https
+  port: 8080
+  json_api: enabled_for_firecrawl

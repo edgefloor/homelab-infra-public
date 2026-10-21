@@ -1,0 +1,41 @@
+---
+- name: Read the canonical backup plan
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../../inventory/backup-plan.yml"
+
+- name: Select the managed guest backup definition
+  ansible.builtin.set_fact:
+    managed_backup_definition: "{{ backup_plan.scheduled_jobs | selectattr('id', 'equalto', 'managed-weekly') | first }}"
+
+- name: Read existing managed backup membership
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/backup/managed-weekly, --output-format, json]
+  register: managed_backup_job
+  changed_when: false
+
+- name: Preserve existing members and include every canonical guest
+  ansible.builtin.set_fact:
+    managed_backup_target_ids: >-
+      {{ ((managed_backup_job.stdout | from_json).vmid.split(',') | reject('equalto', '') | map('int') | list
+          + managed_backup_definition.lxc_ids) | unique | sort | list }}
+
+- name: Update managed backup membership without removing guests
+  ansible.builtin.command:
+    argv: [pvesh, set, /cluster/backup/managed-weekly, --vmid, "{{ managed_backup_target_ids | join(',') }}"]
+  when: >-
+    ((managed_backup_job.stdout | from_json).vmid.split(',') | reject('equalto', '') | map('int') | sort | list)
+    != managed_backup_target_ids
+
+- name: Read back the saved managed backup membership
+  ansible.builtin.command:
+    argv: [pvesh, get, /cluster/backup/managed-weekly, --output-format, json]
+  register: managed_backup_saved_job
+  changed_when: false
+
+- name: Verify every intended backup member was saved
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((managed_backup_saved_job.stdout | from_json).vmid.split(',') | reject('equalto', '') | map('int') | sort | list)
+        == managed_backup_target_ids
+    fail_msg: The saved backup job does not match the canonical and preserved guest membership.

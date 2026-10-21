@@ -1,0 +1,11 @@
+[Unit]
+Description=Update the local DNS blocklist daily
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+Unit=coredns-adblock-update.service
+
+[Install]
+WantedBy=timers.target

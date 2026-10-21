@@ -1,0 +1,38 @@
+---
+remote_platform:
+  provider: Example Hosting
+  hostname: remote-platform
+  public_ipv4: 198.51.100.24
+  operating_system: Debian 13
+  architecture: amd64
+  resources:
+    vcpus: 2
+    memory_mib: 3900
+    disk_gib: 40
+  ssh:
+    user: root
+    port: 22
+    host_key:
+      algorithm: ED25519
+      fingerprint: SHA256:WMfelqlorM1KnAPCv5hwPx65CK+wkDS2I6H9EPB92UM
+    password_authentication: false
+    keyboard_interactive_authentication: false
+    root_login: key-only
+  observed_on: '2026-09-05'
+  services:
+    pangolin: { version: 1.22.2, runtime: docker_compose, status: active }
+    gerbil: { version: 1.5.1, runtime: docker_compose, status: active }
+    traefik: { version: v3.7, runtime: docker_compose, status: active }
+    crowdsec: { version: 1.8.1, runtime: docker_compose, status: active }
+    beszel: { version: 0.19.0, runtime: docker_compose, status: active }
+    tuwunel: { version: 1.9.0, runtime: native_systemd, status: active }
+    matrix_rtc_livekit: { version: 1.13.5, runtime: docker_compose, status: active }
+    matrix_rtc_jwt: { version: 0.4.4, runtime: docker_compose, status: active }
+    crowdsec_matrix_bridge: { runtime: native_systemd, status: active }
+  connectivity:
+    home_site: newt
+    home_site_status: online
+  storage:
+    root_filesystem_size_gib: 40
+    root_filesystem_used_gib: 8.3
+    root_filesystem_available_gib: 30

@@ -1,0 +1,31 @@
+---
+- name: Configure NeroCD
+  hosts: nerocd_servers
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, nerocd]
+        cve_provisioning_installations: ["deployment:nerocd"]
+        cve_provisioning_update_channels:
+          - installation: "deployment:nerocd"
+            kind: release-feed
+            source: NeroCD
+            url: https://github.com/edgefloor/NeroCD/releases.atom
+            channel: stable
+            platform: linux-amd64
+            installed_command:
+              - /usr/bin/docker
+              - compose
+              - --env-file
+              - /opt/nerocd/runtime/.env
+              - -f
+              - /opt/nerocd/runtime/compose.production.yaml
+              - -f
+              - /opt/nerocd/runtime/compose.homelab.yml
+              - exec
+              - -T
+              - server
+              - nerocd
+              - version
+            installed_pattern: 'v?([0-9]+(?:\.[0-9]+)+)'

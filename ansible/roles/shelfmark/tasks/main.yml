@@ -1,0 +1,258 @@
+---
+- name: Install Shelfmark runtime and build packages
+  ansible.builtin.apt:
+    name:
+      - chromium
+      - chromium-common
+      - chromium-driver
+      - ffmpeg
+      - gcc
+      - g++
+      - git
+      - libffi-dev
+      - python3-dev
+      - python3-tk
+      - unrar-free
+      - xvfb
+      - xz-utils
+    state: present
+
+- name: Create Shelfmark tool and release directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /books
+    - /tmp/shelfmark
+    - /var/cache/homelab-tools
+    - /opt/shelfmark-releases
+    - "{{ shelfmark_release_path }}"
+    - /opt/uv
+    - "/opt/uv/{{ shelfmark_uv_version }}"
+
+- name: Download the pinned uv release
+  ansible.builtin.get_url:
+    url: "{{ shelfmark_uv_archive_url }}"
+    dest: "/var/cache/homelab-tools/uv-{{ shelfmark_uv_version }}-x86_64-linux.tar.gz"
+    checksum: "sha256:{{ shelfmark_uv_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned uv release
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/uv-{{ shelfmark_uv_version }}-x86_64-linux.tar.gz"
+    dest: "/opt/uv/{{ shelfmark_uv_version }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    creates: "/opt/uv/{{ shelfmark_uv_version }}/uv"
+
+- name: Link the pinned uv tools
+  ansible.builtin.file:
+    src: "/opt/uv/{{ shelfmark_uv_version }}/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+    force: true
+  loop: [uv, uvx]
+
+- name: Download the pinned Node.js release
+  ansible.builtin.get_url:
+    url: "{{ shelfmark_node_archive_url }}"
+    dest: "/var/cache/homelab-tools/node-v{{ shelfmark_node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:{{ shelfmark_node_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned Node.js release
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/node-v{{ shelfmark_node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/node-v{{ shelfmark_node_version }}-linux-x64/bin/node"
+
+- name: Check out the pinned Shelfmark release
+  ansible.builtin.git:
+    repo: "{{ shelfmark_upstream }}.git"
+    dest: "{{ shelfmark_release_path }}"
+    version: "{{ shelfmark_commit }}"
+    force: true
+  register: shelfmark_checkout
+
+- name: Create the locked Shelfmark Python environment
+  ansible.builtin.command:
+    argv:
+      - "/opt/uv/{{ shelfmark_uv_version }}/uv"
+      - sync
+      - --locked
+      - --no-default-groups
+      - --extra
+      - browser
+      - --python
+      - '3.14'
+  args:
+    chdir: "{{ shelfmark_release_path }}"
+    creates: "{{ shelfmark_release_path }}/.venv/bin/python"
+  register: shelfmark_python_environment
+
+- name: Resolve the Shelfmark Xlib namespace
+  ansible.builtin.shell: |
+    set -euo pipefail
+    "/opt/uv/{{ shelfmark_uv_version }}/uv" pip uninstall \
+      --python "{{ shelfmark_release_path }}/.venv/bin/python" python3-xlib || true
+    "/opt/uv/{{ shelfmark_uv_version }}/uv" pip install \
+      --python "{{ shelfmark_release_path }}/.venv/bin/python" \
+      --reinstall python-xlib==0.33
+    "{{ shelfmark_release_path }}/.venv/bin/python" -c \
+      "import Xlib.X; assert hasattr(Xlib.X, 'FamilyServerInterpreted')"
+    touch "{{ shelfmark_release_path }}/.xlib-namespace-resolved"
+  args:
+    executable: /usr/bin/bash
+    creates: "{{ shelfmark_release_path }}/.xlib-namespace-resolved"
+
+- name: Install the locked Shelfmark frontend dependencies
+  ansible.builtin.command:
+    argv:
+      - "/opt/node-v{{ shelfmark_node_version }}-linux-x64/bin/npm"
+      - ci
+  args:
+    chdir: "{{ shelfmark_release_path }}/src/frontend"
+    creates: "{{ shelfmark_release_path }}/src/frontend/node_modules/.package-lock.json"
+  environment:
+    PATH: "/opt/node-v{{ shelfmark_node_version }}-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
+
+- name: Build the Shelfmark frontend
+  ansible.builtin.command:
+    argv:
+      - "/opt/node-v{{ shelfmark_node_version }}-linux-x64/bin/npm"
+      - run
+      - build
+  args:
+    chdir: "{{ shelfmark_release_path }}/src/frontend"
+    creates: "{{ shelfmark_release_path }}/src/frontend/dist/index.html"
+  environment:
+    PATH: "/opt/node-v{{ shelfmark_node_version }}-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
+
+- name: Install the built Shelfmark frontend
+  ansible.builtin.copy:
+    src: "{{ shelfmark_release_path }}/src/frontend/dist/"
+    dest: "{{ shelfmark_release_path }}/frontend-dist"
+    remote_src: true
+    owner: root
+    group: root
+    mode: preserve
+  register: shelfmark_frontend
+
+- name: Install the native Shelfmark launcher
+  ansible.builtin.template:
+    src: start.sh.j2
+    dest: "{{ shelfmark_release_path }}/start.sh"
+    owner: root
+    group: root
+    mode: '0755'
+  register: shelfmark_launcher
+
+- name: Activate the pinned Shelfmark release
+  ansible.builtin.file:
+    src: "{{ shelfmark_release_path }}"
+    dest: /opt/shelfmark
+    state: link
+    force: true
+  register: shelfmark_release_link
+
+- name: Record the active Shelfmark release in its environment
+  ansible.builtin.lineinfile:
+    path: /etc/shelfmark/.env
+    regexp: '^RELEASE_VERSION='
+    line: "RELEASE_VERSION={{ shelfmark_version }}"
+    owner: root
+    group: root
+    mode: '0600'
+    backup: true
+  register: shelfmark_release_environment
+  no_log: true
+
+- name: Restrict the Shelfmark secret environment
+  ansible.builtin.file:
+    path: /etc/shelfmark/.env
+    state: file
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Validate Shelfmark OIDC and local fallback settings
+  ansible.builtin.shell: |
+    set -euo pipefail
+    grep -Fqx 'AUTH_METHOD=oidc' /etc/shelfmark/.env
+    grep -Fqx 'OIDC_AUTO_REDIRECT=true' /etc/shelfmark/.env
+    grep -Fqx 'HIDE_LOCAL_AUTH=false' /etc/shelfmark/.env
+    grep -Fqx 'DISABLE_LOCAL_AUTH=false' /etc/shelfmark/.env
+  args:
+    executable: /usr/bin/bash
+  changed_when: false
+  no_log: true
+
+- name: Validate the Shelfmark local break-glass administrator
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - >-
+        import sqlite3;
+        c=sqlite3.connect('file:/etc/shelfmark/users.db?mode=ro', uri=True);
+        assert c.execute("select count(*) from users where auth_source='builtin' and role='admin' and password_hash is not null").fetchone()[0] > 0
+  changed_when: false
+  no_log: true
+
+- name: Check the active Shelfmark release link
+  ansible.builtin.command:
+    argv: [/usr/bin/readlink, /opt/shelfmark]
+  register: shelfmark_active_release
+  changed_when: false
+  failed_when: shelfmark_active_release.stdout != shelfmark_release_path
+
+- name: Check the isolated Shelfmark Python runtime
+  ansible.builtin.command:
+    argv: [/opt/shelfmark/.venv/bin/python, --version]
+  register: shelfmark_python_runtime
+  changed_when: false
+  failed_when: not shelfmark_python_runtime.stdout.startswith(shelfmark_python_version_prefix)
+
+- name: Install Shelfmark systemd service
+  ansible.builtin.template:
+    src: shelfmark.service.j2
+    dest: /etc/systemd/system/shelfmark.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: shelfmark_service_unit
+
+- name: Apply requested Shelfmark service state
+  ansible.builtin.systemd_service:
+    name: shelfmark.service
+    enabled: "{{ shelfmark_start_service }}"
+    state: >-
+      {{ 'restarted' if shelfmark_start_service and
+         (shelfmark_checkout.changed or
+          shelfmark_python_environment.changed or
+          shelfmark_frontend.changed or
+          shelfmark_launcher.changed or
+          shelfmark_release_link.changed or
+          shelfmark_release_environment.changed or
+          shelfmark_service_unit.changed)
+         else ('started' if shelfmark_start_service else 'stopped') }}
+    daemon_reload: true
+
+- name: Check Shelfmark health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ shelfmark_port }}/api/health"
+    return_content: true
+    status_code: 200
+  register: shelfmark_health
+  retries: 30
+  delay: 2
+  until: shelfmark_health.status == 200 and shelfmark_health.json.status == 'ok'
+  when: shelfmark_start_service

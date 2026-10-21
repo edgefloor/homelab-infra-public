@@ -1,0 +1,26 @@
+---
+incident_backup_mode: receiver_prepare
+incident_backup_receiver_host: plan-runner
+incident_backup_receiver_dir: /var/lib/incident-backups
+incident_backup_receiver_config_dir: /etc/incident-backup
+incident_backup_incident_host: 10.42.0.214
+incident_backup_helix_host: 10.42.0.212
+incident_backup_source_user: root
+incident_backup_keep_per_source: 3
+incident_backup_max_bytes: 10737418240
+incident_backup_min_free_bytes: 2147483648
+incident_backup_schedule: '*-*-* 04:15:00 Europe/Budapest'
+incident_backup_receiver_public_key: ''
+incident_backup_incident_host_key: ''
+incident_backup_helix_host_key: ''
+# Remove a retired source from this list without deleting its retained archives.
+incident_backup_sources:
+  - name: incident
+    host: "{{ incident_backup_incident_host }}"
+    host_key: "{{ incident_backup_incident_host_key }}"
+    verify_sqlite: true
+  - name: helix
+    host: "{{ incident_backup_helix_host }}"
+    host_key: "{{ incident_backup_helix_host_key }}"
+    verify_sqlite: false
+incident_backup_run_now: true

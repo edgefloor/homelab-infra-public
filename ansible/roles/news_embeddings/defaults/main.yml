@@ -1,0 +1,13 @@
+---
+news_embeddings_port: 5690
+news_embeddings_bind: 0.0.0.0
+news_embeddings_allowed_client: 10.42.0.216
+news_embeddings_model: google/embeddinggemma-2
+news_embeddings_revision: 914f7f89142e33e77833254d9c9b90c3cef7303b
+news_embeddings_device: cuda
+news_embeddings_threads: 2
+news_embeddings_idle_seconds: 30
+news_embeddings_local_files_only: true
+news_embeddings_nvidia_driver_version: 580.178.04
+news_embeddings_nvidia_driver_url: https://download.nvidia.com/XFree86/Linux-x86_64/580.178.04/NVIDIA-Linux-x86_64-580.178.04-no-compat32.run
+news_embeddings_nvidia_driver_sha256: 1833c8c5c53481dfab46df442c3de26ec5d4c35084e03d94ad93746d29899750

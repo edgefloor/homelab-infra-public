@@ -1,0 +1,162 @@
+---
+- name: Require the Docker runtime
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+      - openssl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable and start Docker
+  ansible.builtin.systemd_service:
+    name: docker.service
+    enabled: true
+    state: started
+
+- name: Create MatrixRTC directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ matrix_rtc_install_dir }}", mode: '0750' }
+    - { path: "{{ matrix_rtc_credentials_dir }}", mode: '0700' }
+
+- name: Inspect MatrixRTC credentials
+  ansible.builtin.stat:
+    path: "{{ matrix_rtc_credentials_dir }}/{{ item }}"
+  loop:
+    - livekit-key
+    - livekit-secret
+  register: matrix_rtc_credentials
+
+- name: Generate the LiveKit API key
+  ansible.builtin.command: openssl rand -hex 10
+  register: matrix_rtc_generated_key
+  when: not matrix_rtc_credentials.results[0].stat.exists
+  no_log: true
+
+- name: Generate the LiveKit API secret
+  ansible.builtin.command: openssl rand -hex 32
+  register: matrix_rtc_generated_secret
+  when: not matrix_rtc_credentials.results[1].stat.exists
+  no_log: true
+
+- name: Store the LiveKit API key
+  ansible.builtin.copy:
+    content: "{{ matrix_rtc_generated_key.stdout }}\n"
+    dest: "{{ matrix_rtc_credentials_dir }}/livekit-key"
+    owner: root
+    group: root
+    mode: '0600'
+  when: matrix_rtc_generated_key is not skipped
+  no_log: true
+
+- name: Store the LiveKit API secret
+  ansible.builtin.copy:
+    content: "{{ matrix_rtc_generated_secret.stdout }}\n"
+    dest: "{{ matrix_rtc_credentials_dir }}/livekit-secret"
+    owner: root
+    group: root
+    mode: '0600'
+  when: matrix_rtc_generated_secret is not skipped
+  no_log: true
+
+- name: Read MatrixRTC credentials
+  ansible.builtin.slurp:
+    src: "{{ matrix_rtc_credentials_dir }}/{{ item }}"
+  loop:
+    - livekit-key
+    - livekit-secret
+  register: matrix_rtc_credential_content
+  no_log: true
+
+- name: Prepare MatrixRTC credentials
+  ansible.builtin.set_fact:
+    matrix_rtc_livekit_key: "{{ matrix_rtc_credential_content.results[0].content | b64decode | trim }}"
+    matrix_rtc_livekit_secret: "{{ matrix_rtc_credential_content.results[1].content | b64decode | trim }}"
+  no_log: true
+
+- name: Install the combined LiveKit key file
+  ansible.builtin.copy:
+    content: "{{ matrix_rtc_livekit_key }}: {{ matrix_rtc_livekit_secret }}\n"
+    dest: "{{ matrix_rtc_credentials_dir }}/livekit-keypair"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Install the LiveKit configuration
+  ansible.builtin.template:
+    src: livekit.yaml.j2
+    dest: "{{ matrix_rtc_install_dir }}/livekit.yaml"
+    owner: root
+    group: root
+    mode: '0600'
+  register: matrix_rtc_livekit_config
+  no_log: true
+
+- name: Install the MatrixRTC Compose definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ matrix_rtc_install_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: matrix_rtc_compose
+
+- name: Pull pinned MatrixRTC images
+  ansible.builtin.command:
+    cmd: docker compose pull --quiet
+    chdir: "{{ matrix_rtc_install_dir }}"
+  changed_when: false
+
+- name: Validate the LiveKit configuration
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --rm
+      - -v
+      - "{{ matrix_rtc_install_dir }}/livekit.yaml:/etc/livekit.yaml:ro"
+      - -v
+      - "{{ matrix_rtc_credentials_dir }}/livekit-keypair:/run/secrets/livekit-keypair:ro"
+      - "{{ matrix_rtc_livekit_image }}"
+      - ports
+      - --config
+      - /etc/livekit.yaml
+      - --key-file
+      - /run/secrets/livekit-keypair
+  changed_when: false
+
+- name: Start the MatrixRTC services
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: "{{ matrix_rtc_install_dir }}"
+  register: matrix_rtc_up
+  changed_when: >-
+    'Created' in matrix_rtc_up.stderr or
+    'Recreated' in matrix_rtc_up.stderr or
+    'Started' in matrix_rtc_up.stderr
+
+- name: Wait for the MatrixRTC authorization service
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ matrix_rtc_jwt_port }}/healthz"
+    status_code: 200
+  register: matrix_rtc_jwt_health
+  retries: 30
+  delay: 2
+  until: matrix_rtc_jwt_health.status == 200
+
+- name: Verify MatrixRTC containers are running
+  ansible.builtin.command:
+    cmd: docker compose ps --status running --services
+    chdir: "{{ matrix_rtc_install_dir }}"
+  register: matrix_rtc_running_services
+  changed_when: false
+  failed_when: >-
+    matrix_rtc_running_services.stdout_lines | sort != ['jwt', 'livekit'] | sort

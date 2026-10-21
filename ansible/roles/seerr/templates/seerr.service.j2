@@ -1,0 +1,25 @@
+[Unit]
+Description=Seerr
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User={{ seerr_user }}
+Group={{ seerr_group }}
+EnvironmentFile=/etc/seerr/seerr.conf
+Environment=NODE_ENV=production
+Environment=HOME=/var/lib/seerr
+WorkingDirectory=/opt/seerr/current
+ExecStart=/opt/node-v{{ seerr_node_version }}-linux-x64/bin/node /opt/seerr/current/dist/index.js
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/seerr
+
+[Install]
+WantedBy=multi-user.target

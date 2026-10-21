@@ -1,0 +1,9 @@
+---
+pocket_id_version: v2.14.0
+pocket_id_binary_url: https://github.com/pocket-id/pocket-id/releases/download/v2.14.0/pocket-id_linux_amd64
+pocket_id_binary_sha256: da32b4e7bc8ba817ae2cee6e62634834bf234965fa237d25ab38fc3bec58ef48
+pocket_id_user: pocketid
+pocket_id_group: pocketid
+pocket_id_port: 1411
+pocket_id_trust_proxy: 10.42.0.202
+pocket_id_start_service: true

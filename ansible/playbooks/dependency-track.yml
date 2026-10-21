@@ -1,0 +1,7 @@
+---
+- name: Install the native Dependency-Track dashboard
+  hosts: incident
+  become: true
+  gather_facts: true
+  roles:
+    - dependency_track

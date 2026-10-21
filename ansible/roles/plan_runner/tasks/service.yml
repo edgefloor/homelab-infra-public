@@ -1,0 +1,56 @@
+---
+- name: Check runner registration before managing its service
+  ansible.builtin.stat:
+    path: /opt/actions-runner/.runner
+  register: runner_configuration_after
+
+- name: Find an installed Actions runner service
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: actions.runner.*.service
+    file_type: file
+  register: runner_service_units
+
+- name: Require a single expected runner service before managing it
+  ansible.builtin.assert:
+    that:
+      - >-
+        runner_service_units.matched == 0 or
+        (runner_service_units.matched == 1 and
+         runner_service_units.files[0].path | basename == github_runner_service_name)
+    fail_msg: Migrate unexpected Actions runner service units explicitly before applying this role.
+
+- name: Install the runner service launcher as the runner account
+  become_user: "{{ github_runner_user }}"
+  ansible.builtin.copy:
+    src: /opt/actions-runner/bin/runsvc.sh
+    dest: /opt/actions-runner/runsvc.sh
+    remote_src: true
+    mode: '0755'
+  when: runner_configuration_after.stat.exists
+
+- name: Install the root-owned Actions runner service
+  ansible.builtin.template:
+    src: actions-runner.service.j2
+    dest: "/etc/systemd/system/{{ github_runner_service_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: runner_configuration_after.stat.exists
+
+- name: Record the service name as the runner account
+  become_user: "{{ github_runner_user }}"
+  ansible.builtin.copy:
+    content: "{{ github_runner_service_name }}\n"
+    dest: /opt/actions-runner/.service
+    mode: '0644'
+  when: runner_configuration_after.stat.exists
+
+- name: Apply the explicit runner service state
+  ansible.builtin.systemd_service:
+    name: "{{ github_runner_service_name }}"
+    enabled: "{{ github_runner_enabled | bool }}"
+    state: "{{ (github_runner_enabled | bool) | ternary('started', 'stopped') }}"
+    daemon_reload: true
+  when:
+    - runner_configuration_after.stat.exists

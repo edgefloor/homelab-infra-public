@@ -1,0 +1,18 @@
+[Unit]
+Description=Firecrawl and SearXNG stack
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ firecrawl_runtime_dir }}
+ExecStart=/usr/bin/docker compose --env-file .env -f ../source/docker-compose.yaml -f docker-compose.override.yml up -d --remove-orphans
+ExecReload=/usr/bin/docker compose --env-file .env -f ../source/docker-compose.yaml -f docker-compose.override.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose --env-file .env -f ../source/docker-compose.yaml -f docker-compose.override.yml stop
+TimeoutStartSec=1800
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

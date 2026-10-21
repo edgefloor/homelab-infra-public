@@ -1,0 +1,50 @@
+---
+sbom_upload_url: "{{ 'http://127.0.0.1:8791' if inventory_hostname == 'pangolin' else 'https://vulns.homelab.example' }}"
+sbom_upload_resolve: >-
+  {{ [] if inventory_hostname == 'pangolin' else
+     [(sbom_upload_url | urlsplit('hostname')) + ':443:' + sbom_routes.homelab_routing.caddy_address] }}
+sbom_upload_credential_host: incident
+sbom_upload_credential_source: /root/.config/dependency-track/upload-key.json
+sbom_upload_portfolio_source: /root/.config/dependency-track/portfolio.json
+sbom_upload_vendor_boms: >-
+  {{ {'dependency-track': {
+       'url': 'https://github.com/DependencyTrack/dependency-track/releases/download/' + sbom_dependency_track_defaults.dependency_track_version + '/bom.json',
+       'path': sbom_upload_config_dir + '/dependency-track-bom.json',
+       'sha256': 'ba2d41806d09e235a433a7a55860bbb00d92f32fdf595bb520083637de22a665',
+       'version': sbom_dependency_track_defaults.dependency_track_version,
+       'archive': '/var/cache/homelab-tools/dependency-track-' + sbom_dependency_track_defaults.dependency_track_version + '.tar.gz',
+       'archive_sha256': sbom_dependency_track_defaults.dependency_track_backend_sha256
+     }} if inventory_hostname == 'incident' else {} }}
+sbom_upload_config_dir: /etc/homelab-sbom
+sbom_upload_state_dir: /var/lib/homelab-sbom
+sbom_upload_cache_dir: /var/cache/homelab-sbom
+sbom_upload_cache_max_bytes: 2147483648
+sbom_upload_min_free_bytes: 1073741824
+sbom_upload_scan_timeout_seconds: 1800
+sbom_upload_schedule: '*-*-* 06:00:00'
+sbom_upload_max_age_seconds: 129600
+sbom_upload_run_now: false
+sbom_upload_go_binaries: >-
+  {{ update_monitor_go_binaries | default(
+     (['/usr/local/bin/beszel-agent'] if inventory_hostname in groups.get('beszel_agents', []) else [])
+     + (update_monitor_extra_go_binaries | default([]))) }}
+sbom_upload_retired_deployments: [vulnerability-incidents]
+sbom_upload_retired_containers: [helix-cve]
+sbom_upload_skip_dirs:
+  - /proc
+  - /sys
+  - /dev
+  - /run
+  - /tmp
+  - /var/tmp
+  - /data
+  - /storage
+  - /media
+  - /mnt
+  - /var/lib/lxc
+  - /var/lib/lxcfs
+  - /var/lib/containerd
+  - /var/lib/docker
+  - /var/lib/containers
+  - /var/lib/homelab-incidents
+  - /var/cache

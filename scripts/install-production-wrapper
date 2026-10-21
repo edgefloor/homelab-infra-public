@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+if [ "$(id -u)" -ne 0 ] || [ "$#" -ne 1 ]; then
+  echo "usage: sudo $0 /absolute/path/to/repository" >&2
+  exit 64
+fi
+
+repo=$1
+case "$repo" in /*) ;; *) echo "repository path must be absolute" >&2; exit 64;; esac
+source_file=$repo/scripts/homelab-production-deploy
+[ -f "$source_file" ] && [ ! -L "$source_file" ] || {
+  echo "wrapper source is missing or is a symlink" >&2
+  exit 66
+}
+
+install -d -o root -g root -m 0755 /usr/local/sbin
+install -o root -g root -m 0755 "$source_file" /usr/local/sbin/homelab-production-deploy
+install -d -o root -g root -m 0750 /etc/homelab-production
+
+cat >&2 <<'EOF'
+Installed the fail-closed production wrapper. Do not create deployment.conf or
+its payload until both have been reviewed and installed as root-owned,
+non-group/world-writable regular files.
+
+Validate with visudo -cf, then install this exact sudoers rule as mode 0440:
+  Defaults:github-runner !setenv,secure_path=/usr/local/bin:/usr/bin:/bin
+  github-runner ALL=(root) NOPASSWD: /usr/local/sbin/homelab-production-deploy
+
+NOEXEC must not be added: the reviewed wrapper intentionally execs one fixed,
+root-owned payload after its guards pass, and NOEXEC would block that
+handoff (and external integrity helpers on some sudo builds). The exact absolute
+zero-argument allow-list, !setenv, secure_path, ownership, and modes are the
+controlling boundaries.
+EOF

@@ -1,0 +1,49 @@
+---
+jellyfin_version: '12.0'
+jellyfin_package_version: 12.0+deb13
+jellyfin_ffmpeg_package: jellyfin-ffmpeg8
+jellyfin_ffmpeg_version: 8.1.2-4-trixie
+jellyfin_plugins:
+  - name: Chapter Creator
+    version: 0.6.1.0
+    target_abi: 12.0.0.0
+    guid: e22fb8f5-bc98-4f76-9be4-87de302a97ea
+    category: General
+    owner: Intro Skipper
+    timestamp: '2026-07-10T11:28:07Z'
+    archive_url: >-
+      https://github.com/intro-skipper/jellyfin-plugin-ms-chapter/releases/download/0.6.1.0/ChapterCreator-0.6.1.0.zip
+    archive_sha256: ea4f3e09ee6f9a3f7d7ec25f18c7fe69db258a7bd786cb846bb736def18fee19
+    assembly: ChapterCreator.dll
+  - name: Community SSO for Jellyfin
+    version: 5.0.0.82
+    target_abi: 12.0.0.0
+    guid: 505ce9d1-d916-42fa-86ca-673ef241d7df
+    category: Authentication
+    owner: Flowfin
+    timestamp: '2026-09-11T08:57:12Z'
+    archive_url: >-
+      https://github.com/Flowfin/jellyfin-plugin-sso/releases/download/5.0.0-JF12-beta.82/community-sso-for-jellyfin_5.0.0.82.zip
+    archive_sha256: a3c9dd434ca076853142afd1db904cdee6294975db5378f2bafb1e317da38c01
+    assembly: SSO-Auth.dll
+jellyfin_sso_config_path: /var/lib/jellyfin/plugins/configurations/SSO-Auth.xml
+jellyfin_sso_provider: PocketID
+jellyfin_sso_access_role: jellyfin
+jellyfin_sso_identity_host: pocket-id
+jellyfin_sso_identity_database: /opt/pocket-id/data/pocket-id.db
+jellyfin_repository_key_sha256: a0cde241ae297fa6f0265c0bf15ce9eb9ee97c008904a59ab367a67d59532839
+jellyfin_nvidia_enabled: true
+jellyfin_nvidia_driver_version: 580.178.04
+jellyfin_nvidia_driver_url: https://download.nvidia.com/XFree86/Linux-x86_64/580.178.04/NVIDIA-Linux-x86_64-580.178.04-no-compat32.run
+jellyfin_nvidia_driver_sha256: 1833c8c5c53481dfab46df442c3de26ec5d4c35084e03d94ad93746d29899750
+jellyfin_hardware_acceleration_type: nvenc
+jellyfin_transcode_throttling_enabled: true
+jellyfin_transcode_segment_deletion_enabled: true
+jellyfin_known_proxies:
+  - 10.42.0.202
+jellyfin_user: jellyfin
+jellyfin_group: jellyfin
+jellyfin_uid: 103
+jellyfin_gid: 112
+jellyfin_port: 8096
+jellyfin_start_service: true

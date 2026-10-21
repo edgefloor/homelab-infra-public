@@ -1,0 +1,23 @@
+---
+nerocd_repository: https://github.com/edgefloor/NeroCD
+nerocd_version: v0.3.23
+nerocd_commit: 8224d9e99980e5370c730c1a0d29f2115d9b42d1
+nerocd_image: ghcr.io/edgefloor/nerocd@sha256:dc5b14ee4a47e0f24555f2bbaa50015cba387c55f17b43dad567d27d2a849069
+nerocd_edge_image: docker.io/library/caddy@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+nerocd_install_dir: /opt/nerocd
+nerocd_source_dir: "{{ nerocd_install_dir }}/source"
+nerocd_runtime_dir: "{{ nerocd_install_dir }}/runtime"
+nerocd_secrets_dir: "{{ nerocd_install_dir }}/secrets"
+nerocd_public_origin: https://nerocd.homelab.example
+nerocd_listen_address: 10.42.0.213
+nerocd_listen_port: 8080
+nerocd_proxy_network: nerocd-production-proxy
+nerocd_proxy_subnet: 172.30.23.0/24
+nerocd_server_proxy_address: 172.30.23.2
+nerocd_edge_proxy_address: 172.30.23.3
+nerocd_owner_database_user: nerocd_owner
+nerocd_app_database_user: nerocd_app
+nerocd_bootstrap_email: operator@example.com
+nerocd_bootstrap_name: operator
+nerocd_backup_interval_seconds: 86400
+nerocd_backup_retention_count: 7

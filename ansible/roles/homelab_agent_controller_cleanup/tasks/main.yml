@@ -1,0 +1,103 @@
+---
+- name: Require the replacement Hermes capability to be ready before cleanup
+  ansible.builtin.command:
+    argv: [/usr/local/bin/homelab-agentctl, list]
+  delegate_to: hermes-agent
+  changed_when: false
+
+- name: Stop and disable the retired controller units
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - disable
+      - --now
+      - homelab-agent.service
+      - homelab-investigator.socket
+      - homelab-memory.socket
+      - homelab-memory-sync.timer
+      - homelab-memory-sync.service
+  changed_when: false
+  failed_when: false
+
+- name: Remove retired controller systemd units
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - homelab-agent.service
+    - homelab-investigator.socket
+    - homelab-investigator@.service
+    - homelab-memory.socket
+    - homelab-memory@.service
+    - homelab-memory-sync.service
+    - homelab-memory-sync.timer
+  register: retired_controller_units
+
+- name: Remove retired controller runtime and private state
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /opt/homelab-agent
+    - /etc/homelab-investigator
+    - /var/lib/homelab-investigator
+    - /usr/local/bin/homelab-agentctl
+    - /usr/local/bin/homelab-memoryctl
+    - /usr/local/bin/hermes
+    - /usr/local/lib/hermes-agent
+    - /var/lib/hermes-agent
+
+- name: Remove controller-only relay credentials and state from the target account
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/homelab-agent/matrix-access-token
+    - /etc/homelab-agent/matrix-room-agent
+    - /etc/homelab-agent/matrix-room-health
+    - /etc/homelab-agent/matrix-room-vulnerabilities
+    - /etc/homelab-agent/targets.json
+    - /var/lib/homelab-agent/.ssh/id_ed25519
+    - /var/lib/homelab-agent/.ssh/id_ed25519.pub
+    - /var/lib/homelab-agent/cve-backlog.sqlite3
+    - /var/lib/homelab-agent/matrix-since
+    - /var/lib/homelab-agent/results
+    - /var/lib/homelab-agent/investigations
+
+- name: Find cached Hermes installers from the temporary deployment
+  ansible.builtin.find:
+    paths: /var/cache/homelab-tools
+    patterns: hermes-agent-install-*.sh
+    file_type: file
+  register: retired_hermes_installers
+
+- name: Remove cached Hermes installers from the plan runner
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ retired_hermes_installers.files }}"
+
+- name: Remove the temporary Hermes account
+  ansible.builtin.user:
+    name: hermes-agent
+    state: absent
+    remove: true
+
+- name: Remove the temporary Hermes group
+  ansible.builtin.group:
+    name: hermes-agent
+    state: absent
+
+- name: Reload systemd after removing the retired controller
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: retired_controller_units.changed
+
+- name: Clear unloaded failed instances from the retired controller
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - reset-failed
+      - homelab-investigator@*.service
+      - homelab-memory@*.service
+  changed_when: false

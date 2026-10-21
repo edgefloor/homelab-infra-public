@@ -1,0 +1,238 @@
+---
+- name: Install the Firecrawl container runtime
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-compose
+      - git
+      - openssl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable and start Docker
+  ansible.builtin.systemd_service:
+    name: docker.service
+    enabled: true
+    state: started
+
+- name: Create the Firecrawl directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ firecrawl_install_dir }}", mode: '0755' }
+    - { path: "{{ firecrawl_runtime_dir }}", mode: '0700' }
+    - { path: "{{ firecrawl_runtime_dir }}/searxng", mode: '0755' }
+    - { path: "{{ firecrawl_secrets_dir }}", mode: '0700' }
+
+- name: Check out the pinned Firecrawl release
+  ansible.builtin.git:
+    repo: "{{ firecrawl_repository }}"
+    dest: "{{ firecrawl_source_dir }}"
+    version: "{{ firecrawl_version }}"
+    depth: 1
+    single_branch: true
+    update: true
+    force: true
+  register: firecrawl_source
+  changed_when: >-
+    (firecrawl_source.before | default('')) !=
+    (firecrawl_source.after | default(''))
+
+- name: Verify the pinned Firecrawl commit
+  ansible.builtin.command:
+    argv: [git, -C, "{{ firecrawl_source_dir }}", rev-parse, HEAD]
+  register: firecrawl_checked_out_commit
+  changed_when: false
+  failed_when: firecrawl_checked_out_commit.stdout | trim != firecrawl_commit
+
+- name: Generate the Firecrawl PostgreSQL password
+  ansible.builtin.command: openssl rand -hex 32
+  args:
+    creates: "{{ firecrawl_secrets_dir }}/postgres-password"
+  register: firecrawl_postgres_password_generated
+  no_log: true
+
+- name: Store the Firecrawl PostgreSQL password
+  ansible.builtin.copy:
+    content: "{{ firecrawl_postgres_password_generated.stdout }}\n"
+    dest: "{{ firecrawl_secrets_dir }}/postgres-password"
+    owner: root
+    group: root
+    mode: '0400'
+  when: firecrawl_postgres_password_generated.changed
+  no_log: true
+
+- name: Generate the SearXNG secret
+  ansible.builtin.command: openssl rand -hex 32
+  args:
+    creates: "{{ firecrawl_secrets_dir }}/searxng-secret"
+  register: searxng_secret_generated
+  no_log: true
+
+- name: Store the SearXNG secret
+  ansible.builtin.copy:
+    content: "{{ searxng_secret_generated.stdout }}\n"
+    dest: "{{ firecrawl_secrets_dir }}/searxng-secret"
+    owner: root
+    group: root
+    mode: '0400'
+  when: searxng_secret_generated.changed
+  no_log: true
+
+- name: Read the generated stack secrets
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop:
+    - "{{ firecrawl_secrets_dir }}/postgres-password"
+    - "{{ firecrawl_secrets_dir }}/searxng-secret"
+  register: firecrawl_secret_files
+  no_log: true
+
+- name: Install the Firecrawl environment
+  ansible.builtin.template:
+    src: firecrawl.env.j2
+    dest: "{{ firecrawl_runtime_dir }}/.env"
+    owner: root
+    group: root
+    mode: '0400'
+  register: firecrawl_environment
+  no_log: true
+
+- name: Install the Firecrawl Compose override
+  ansible.builtin.template:
+    src: docker-compose.override.yml.j2
+    dest: "{{ firecrawl_runtime_dir }}/docker-compose.override.yml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: firecrawl_compose_override
+
+- name: Install the SearXNG settings
+  ansible.builtin.template:
+    src: searxng-settings.yml.j2
+    dest: "{{ firecrawl_runtime_dir }}/searxng/settings.yml"
+    owner: root
+    group: root
+    mode: '0644'
+  register: searxng_settings
+
+- name: Validate the combined Firecrawl Compose model
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f ../source/docker-compose.yaml -f docker-compose.override.yml
+      config --quiet
+    chdir: "{{ firecrawl_runtime_dir }}"
+  changed_when: false
+
+- name: Install the Firecrawl systemd service
+  ansible.builtin.template:
+    src: firecrawl.service.j2
+    dest: /etc/systemd/system/firecrawl.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: firecrawl_service
+
+- name: Pull the pinned external images
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f ../source/docker-compose.yaml -f docker-compose.override.yml
+      pull --quiet --ignore-buildable
+    chdir: "{{ firecrawl_runtime_dir }}"
+  changed_when: false
+
+- name: Build the pinned Firecrawl release
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f ../source/docker-compose.yaml -f docker-compose.override.yml
+      build
+    chdir: "{{ firecrawl_runtime_dir }}"
+  register: firecrawl_build
+  changed_when: false
+
+- name: Enable and reconcile Firecrawl and SearXNG
+  ansible.builtin.systemd_service:
+    name: firecrawl.service
+    enabled: true
+    daemon_reload: true
+    state: >-
+      {{ 'restarted' if
+         firecrawl_source.changed or
+         firecrawl_environment.changed or
+         firecrawl_compose_override.changed or
+         searxng_settings.changed or
+         firecrawl_service.changed or
+         firecrawl_build.changed
+         else 'started' }}
+
+- name: Wait for the Firecrawl API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ firecrawl_port }}/"
+    return_content: true
+  register: firecrawl_health
+  until: >-
+    firecrawl_health.status == 200 and
+    firecrawl_health.json.message | default('') == 'Firecrawl API'
+  retries: 90
+  delay: 5
+
+- name: Wait for the SearXNG JSON API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ searxng_port }}/search?q=firecrawl&format=json"
+    return_content: true
+  register: searxng_health
+  until: >-
+    searxng_health.status == 200 and
+    searxng_health.json.results is defined
+  retries: 30
+  delay: 3
+
+- name: Verify Firecrawl scraping through the LAN listener
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ firecrawl_port }}/v1/scrape"
+    method: POST
+    body_format: json
+    body:
+      url: https://example.com
+      formats: [markdown]
+    return_content: true
+    status_code: 200
+  register: firecrawl_scrape
+  failed_when: >-
+    not (firecrawl_scrape.json.success | default(false)) or
+    'Example Domain' not in (firecrawl_scrape.json.data.markdown | default(''))
+
+- name: Verify Firecrawl search uses SearXNG
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ firecrawl_port }}/v2/search"
+    method: POST
+    body_format: json
+    body:
+      query: IANA example domain
+      limit: 2
+    return_content: true
+    status_code: 200
+  register: firecrawl_search
+  failed_when: >-
+    not (firecrawl_search.json.success | default(false)) or
+    firecrawl_search.json.data.web is not defined or
+    firecrawl_search.json.data.web | length == 0
+
+- name: Verify the Firecrawl container has the private SearXNG endpoint
+  ansible.builtin.command:
+    cmd: >-
+      docker compose --env-file .env
+      -f ../source/docker-compose.yaml -f docker-compose.override.yml
+      exec -T api node -e 'process.stdout.write(process.env.SEARXNG_ENDPOINT || "")'
+    chdir: "{{ firecrawl_runtime_dir }}"
+  register: firecrawl_searxng_environment
+  changed_when: false
+  failed_when: firecrawl_searxng_environment.stdout | trim != searxng_endpoint

@@ -1,0 +1,26 @@
+---
+- name: Configure the Caddy edge
+  hosts: caddy_staging
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, caddy, crowdsec_home]
+        cve_provisioning_installations:
+          - "binary:/usr/bin/caddy"
+          - "binary:/usr/bin/crowdsec"
+          - "binary:/usr/bin/crowdsec-firewall-bouncer"
+          - "deployment:caddy"
+          - "deployment:crowdsec"
+          - "deployment:crowdsec-bouncer"
+        cve_provisioning_update_channels:
+          - installation: "binary:/usr/bin/caddy"
+            kind: release-feed
+            source: Caddy
+            url: https://github.com/caddyserver/caddy/releases.atom
+            channel: stable
+            platform: linux-amd64
+            installed_command: [/usr/bin/caddy, version]
+            installed_pattern: 'v?([0-9]+(?:\.[0-9]+)+)'

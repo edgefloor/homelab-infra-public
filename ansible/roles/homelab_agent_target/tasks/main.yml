@@ -1,0 +1,120 @@
+---
+- name: Require explicit opt-in to the retired custom CVE pipeline
+  ansible.builtin.import_role:
+    name: legacy_cve_guard
+  tags: [always]
+
+- name: Require a controller public key and explicit service allowlist
+  ansible.builtin.assert:
+    that:
+      - homelab_agent_public_key | length > 0
+      - homelab_agent_units is mapping
+    fail_msg: The homelab agent target needs a controller key and unit map.
+
+- name: Read the endpoint SSH host public key through the operator connection
+  ansible.builtin.slurp:
+    src: /etc/ssh/ssh_host_ed25519_key.pub
+  register: homelab_target_ssh_host_key
+
+- name: Create the restricted agent target group
+  ansible.builtin.group:
+    name: "{{ homelab_agent_target_group }}"
+    system: true
+
+- name: Create the restricted agent target account
+  ansible.builtin.user:
+    name: "{{ homelab_agent_target_user }}"
+    group: "{{ homelab_agent_target_group }}"
+    groups: systemd-journal
+    append: true
+    home: /var/lib/homelab-agent
+    create_home: true
+    shell: /bin/bash
+    password_lock: true
+    system: true
+
+- name: Create the restricted agent target configuration directory
+  ansible.builtin.file:
+    path: /etc/homelab-agent
+    state: directory
+    owner: root
+    group: "{{ homelab_agent_target_group }}"
+    mode: '0750'
+
+- name: Install evidence-gateway runtime dependencies
+  ansible.builtin.apt:
+    name:
+      - binutils
+      - file
+      - iproute2
+      - util-linux
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install the allowed systemd unit map
+  ansible.builtin.copy:
+    content: "{{ homelab_agent_units | to_nice_json }}\n"
+    dest: /etc/homelab-agent/units.json
+    owner: root
+    group: "{{ homelab_agent_target_group }}"
+    mode: '0640'
+
+- name: Install the evidence gateway and read policy
+  ansible.builtin.include_tasks: evidence.yml
+
+- name: Install artifact evidence readers
+  ansible.builtin.include_tasks: artifact_tools.yml
+
+- name: Install the restricted remote command
+  ansible.builtin.copy:
+    src: homelab_agent_remote.py
+    dest: /usr/local/libexec/homelab-agent-remote
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the deterministic alert reader on the Matrix bridge target
+  ansible.builtin.copy:
+    src: homelab_alert_read.py
+    dest: /usr/local/libexec/homelab-alert-read
+    owner: root
+    group: root
+    mode: '0755'
+  when: "'matrix-alerts' in homelab_agent_units"
+
+- name: Install the bounded external guest router on Proxmox
+  ansible.builtin.copy:
+    src: homelab_guest_agent.py
+    dest: /usr/local/libexec/homelab-guest-agent
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname == 'proxmox'
+
+- name: Create the restricted SSH directory
+  ansible.builtin.file:
+    path: /var/lib/homelab-agent/.ssh
+    state: directory
+    owner: "{{ homelab_agent_target_user }}"
+    group: "{{ homelab_agent_target_group }}"
+    mode: '0700'
+
+- name: Authorize only the forced homelab-agent command
+  ansible.builtin.copy:
+    content: >-
+      restrict,command="/usr/local/libexec/homelab-agent-remote"
+      {{ homelab_agent_public_key }}
+    dest: /var/lib/homelab-agent/.ssh/authorized_keys
+    owner: "{{ homelab_agent_target_user }}"
+    group: "{{ homelab_agent_target_group }}"
+    mode: '0600'
+
+- name: Permit only read-only evidence operations
+  ansible.builtin.template:
+    src: sudoers.j2
+    dest: /etc/sudoers.d/homelab-agent
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s

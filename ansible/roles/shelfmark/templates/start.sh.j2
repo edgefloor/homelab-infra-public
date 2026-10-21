@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec {{ shelfmark_release_path }}/.venv/bin/gunicorn \
+  --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker \
+  --workers 1 \
+  --timeout 300 \
+  --bind "${FLASK_HOST:-0.0.0.0}:${FLASK_PORT:-{{ shelfmark_port }}}" \
+  shelfmark.main:app

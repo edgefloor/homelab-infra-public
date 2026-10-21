@@ -1,0 +1,165 @@
+---
+- name: Keep external workloads outside managed SBOM deployment
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname not in ['next-plaid', 'eu-law-db']
+      - ansible_host not in ['10.42.0.7', '10.42.0.112', '10.42.0.115']
+
+- name: Read pinned Trivy release metadata without enabling legacy monitoring
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../update_monitor/defaults/main.yml"
+    name: sbom_trivy_defaults
+
+- name: Read installed library scan roots
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../../inventory/security-runtime.yml"
+    name: sbom_runtime
+
+- name: Read the canonical private ingress address
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../../inventory/routes.yml"
+    name: sbom_routes
+
+- name: Read native Dependency-Track release identity without enabling its server role
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../dependency_track/defaults/main.yml"
+    name: sbom_dependency_track_defaults
+
+- name: Require an explicit runtime library inventory for this system
+  ansible.builtin.assert:
+    that: inventory_hostname in sbom_runtime.systems
+
+- name: Install collector prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, python3, tar]
+    state: present
+    update_cache: false
+
+- name: Create private collector directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop:
+    - "{{ sbom_upload_config_dir }}"
+    - "{{ sbom_upload_state_dir }}"
+    - "{{ sbom_upload_cache_dir }}"
+
+- name: Create the pinned Trivy installation directory
+  ansible.builtin.file:
+    path: "/opt/homelab-trivy-{{ sbom_trivy_defaults.update_monitor_trivy_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download the existing checksum-pinned Trivy release
+  ansible.builtin.get_url:
+    url: "https://github.com/aquasecurity/trivy/releases/download/v{{ sbom_trivy_defaults.update_monitor_trivy_version }}/trivy_{{ sbom_trivy_defaults.update_monitor_trivy_version }}_Linux-64bit.tar.gz"
+    checksum: "sha256:{{ sbom_trivy_defaults.update_monitor_trivy_archive_sha256 }}"
+    dest: "/opt/homelab-trivy-{{ sbom_trivy_defaults.update_monitor_trivy_version }}/release.tar.gz"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned scanner
+  ansible.builtin.unarchive:
+    src: "/opt/homelab-trivy-{{ sbom_trivy_defaults.update_monitor_trivy_version }}/release.tar.gz"
+    dest: "/opt/homelab-trivy-{{ sbom_trivy_defaults.update_monitor_trivy_version }}"
+    remote_src: true
+    creates: "/opt/homelab-trivy-{{ sbom_trivy_defaults.update_monitor_trivy_version }}/trivy"
+
+- name: Read the conventional upload service account credential
+  ansible.builtin.slurp:
+    src: "{{ sbom_upload_credential_source }}"
+  delegate_to: "{{ sbom_upload_credential_host }}"
+  run_once: true
+  register: sbom_upload_credential
+  no_log: true
+
+- name: Install the root-only API header
+  ansible.builtin.copy:
+    content: "X-Api-Key: {{ (sbom_upload_credential.content | b64decode | from_json).key }}\n"
+    dest: "{{ sbom_upload_config_dir }}/api-header"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Read the native parent portfolio identity
+  ansible.builtin.slurp:
+    src: "{{ sbom_upload_portfolio_source }}"
+  delegate_to: "{{ sbom_upload_credential_host }}"
+  run_once: true
+  register: sbom_upload_portfolio
+  no_log: true
+
+- name: Install declared collector configuration
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ sbom_upload_config_dir }}/config.json"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Download exact-release publisher SBOMs with pinned checksums
+  ansible.builtin.get_url:
+    url: "{{ item.value.url }}"
+    checksum: "sha256:{{ item.value.sha256 }}"
+    dest: "{{ item.value.path }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ sbom_upload_vendor_boms | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Install the thin collector and uploader
+  ansible.builtin.copy:
+    src: sbom_upload.py
+    dest: /usr/local/sbin/homelab-sbom-upload
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Download reviewed immutable source locks for conservative Rust candidate inventories
+  ansible.builtin.get_url:
+    url: "{{ item.value.url }}"
+    checksum: "sha256:{{ item.value.sha256 }}"
+    dest: "{{ item.value.path }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ sbom_runtime.systems[inventory_hostname].source_locks | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Install standard collection and freshness units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - homelab-sbom.service
+    - homelab-sbom.timer
+    - homelab-sbom-freshness.service
+    - homelab-sbom-freshness.timer
+
+- name: Enable daily collection and hourly freshness checks
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    daemon_reload: true
+    enabled: true
+    state: started
+  loop: [homelab-sbom.timer, homelab-sbom-freshness.timer]
+
+- name: Run an explicitly requested initial upload
+  ansible.builtin.systemd_service:
+    name: homelab-sbom.service
+    state: started
+    no_block: true
+  when: sbom_upload_run_now | bool

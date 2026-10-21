@@ -1,0 +1,186 @@
+---
+- name: Provision the fresh managed n8n guest
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    n8n_tofu_root: /tmp/n8n-tofu-provision
+  tasks:
+    - name: Provision with guaranteed temporary-file cleanup
+      block:
+        - name: Remove any stale isolated provisioning root
+          ansible.builtin.file:
+            path: "{{ n8n_tofu_root }}"
+            state: absent
+
+        - name: Create the isolated provisioning root
+          ansible.builtin.file:
+            path: "{{ n8n_tofu_root }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0700'
+
+        - name: Stage the reviewed Proxmox root
+          ansible.builtin.copy:
+            src: "../../tofu/proxmox/{{ item }}"
+            dest: "{{ n8n_tofu_root }}/{{ item }}"
+            owner: root
+            group: root
+            mode: '0600'
+          loop: >-
+            {{ (query('ansible.builtin.fileglob', playbook_dir + '/../../tofu/proxmox/*.tf')
+                | map('basename') | sort | list) + ['.terraform.lock.hcl'] }}
+
+        - name: Initialize the isolated provisioning root
+          ansible.builtin.command:
+            argv: [homelab-tofu, init, -reconfigure, -input=false]
+            chdir: "{{ n8n_tofu_root }}"
+          changed_when: false
+
+        - name: Plan the fresh n8n guest
+          ansible.builtin.command:
+            argv: [homelab-tofu, plan, -input=false, -no-color, -detailed-exitcode, "-out={{ n8n_tofu_root }}/provision.tfplan"]
+            chdir: "{{ n8n_tofu_root }}"
+          register: n8n_tofu_plan
+          changed_when: n8n_tofu_plan.rc == 2
+          failed_when: n8n_tofu_plan.rc not in [0, 2]
+
+        - name: Read the saved n8n plan as JSON
+          ansible.builtin.command:
+            argv: [homelab-tofu, show, -json, "{{ n8n_tofu_root }}/provision.tfplan"]
+            chdir: "{{ n8n_tofu_root }}"
+          register: n8n_tofu_plan_json
+          changed_when: false
+          no_log: true
+
+        - name: Select actual resource changes in the saved plan
+          ansible.builtin.set_fact:
+            n8n_plan_changes: >-
+              {{ ((n8n_tofu_plan_json.stdout | from_json).resource_changes | default([]))
+                 | rejectattr('change.actions', 'equalto', ['no-op']) | list }}
+          no_log: true
+
+        - name: Require an isolated n8n create or a converged root
+          ansible.builtin.assert:
+            that:
+              - >-
+                (n8n_tofu_plan.rc == 0 and n8n_plan_changes | length == 0) or
+                (n8n_tofu_plan.rc == 2 and n8n_plan_changes | length == 1)
+              - >-
+                n8n_tofu_plan.rc == 0 or
+                n8n_plan_changes[0].address == 'proxmox_virtual_environment_container.managed["n8n"]'
+              - n8n_tofu_plan.rc == 0 or n8n_plan_changes[0].change.actions == ['create']
+              - n8n_tofu_plan.rc == 0 or n8n_plan_changes[0].change.after.vm_id | int == 216
+            fail_msg: "Refusing a Proxmox plan that changes anything except the fresh LXC 216."
+
+        - name: Apply the exact reviewed n8n plan
+          ansible.builtin.command:
+            argv: [homelab-tofu, apply, -input=false, -no-color, -auto-approve, "{{ n8n_tofu_root }}/provision.tfplan"]
+            chdir: "{{ n8n_tofu_root }}"
+          when: n8n_tofu_plan.rc == 2
+
+        - name: Require the Proxmox root to be converged
+          ansible.builtin.command:
+            argv: [homelab-tofu, plan, -input=false, -no-color, -detailed-exitcode]
+            chdir: "{{ n8n_tofu_root }}"
+          register: n8n_tofu_final_plan
+          changed_when: false
+          failed_when: n8n_tofu_final_plan.rc != 0
+      always:
+        - name: Remove the private provisioning root and saved plan
+          ansible.builtin.file:
+            path: "{{ n8n_tofu_root }}"
+            state: absent
+
+- name: Bootstrap administration access in the fresh n8n guest
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    n8n_guest_id: '216'
+    n8n_admin_user: homelab-admin
+    n8n_admin_public_key: >-
+      {{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'HOME') + '/.ssh/id_ed25519.pub') }}
+  tasks:
+    - name: Read the fresh guest configuration
+      ansible.builtin.command:
+        argv: [pct, config, "{{ n8n_guest_id }}"]
+      register: n8n_guest_configuration
+      changed_when: false
+
+    - name: Require the exact fresh managed guest
+      ansible.builtin.assert:
+        that:
+          - "'hostname: n8n' in n8n_guest_configuration.stdout"
+          - "'ip=10.42.0.216/24' in n8n_guest_configuration.stdout"
+          - "'unprivileged: 1' in n8n_guest_configuration.stdout"
+        fail_msg: Refusing to bootstrap a guest that does not match managed LXC 216.
+
+    - name: Refresh package metadata in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, apt-get, update]
+      changed_when: false
+
+    - name: Install administration prerequisites in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, apt-get, install, -y, python3, sudo, openssh-server]
+      register: n8n_bootstrap_packages
+      changed_when: "'0 upgraded, 0 newly installed' not in n8n_bootstrap_packages.stdout"
+
+    - name: Inspect the administration account
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, id, -u, "{{ n8n_admin_user }}"]
+      register: n8n_admin_account
+      changed_when: false
+      failed_when: false
+
+    - name: Create the administration account
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, useradd, --create-home, --shell, /bin/bash, "{{ n8n_admin_user }}"]
+      when: n8n_admin_account.rc != 0
+
+    - name: Create the administration SSH directory
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, install, -d, -m, '0700', -o, "{{ n8n_admin_user }}", -g, "{{ n8n_admin_user }}", "/home/{{ n8n_admin_user }}/.ssh"]
+      changed_when: false
+
+    - name: Install the administration public key
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, tee, "/home/{{ n8n_admin_user }}/.ssh/authorized_keys"]
+        stdin: "{{ n8n_admin_public_key }}\n"
+      changed_when: false
+      no_log: true
+
+    - name: Protect the administration public key
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, chown, "{{ n8n_admin_user }}:{{ n8n_admin_user }}", "/home/{{ n8n_admin_user }}/.ssh/authorized_keys"]
+      changed_when: false
+
+    - name: Set the administration public key mode
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, chmod, '0600', "/home/{{ n8n_admin_user }}/.ssh/authorized_keys"]
+      changed_when: false
+
+    - name: Install the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, tee, "/etc/sudoers.d/{{ n8n_admin_user }}"]
+        stdin: "{{ n8n_admin_user }} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+      changed_when: false
+
+    - name: Protect the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, chmod, '0440', "/etc/sudoers.d/{{ n8n_admin_user }}"]
+      changed_when: false
+
+    - name: Validate the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, visudo, -cf, "/etc/sudoers.d/{{ n8n_admin_user }}"]
+      changed_when: false
+
+    - name: Enable SSH in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ n8n_guest_id }}", --, systemctl, enable, --now, ssh.service]
+      changed_when: false

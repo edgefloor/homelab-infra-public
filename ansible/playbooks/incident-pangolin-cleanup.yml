@@ -1,0 +1,156 @@
+---
+- name: Verify the off-host recovery copy
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Verify the newest incident and Helix backups
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/homelab-incident-backup-status]
+      register: off_host_backup_status
+      changed_when: false
+
+    - name: Publish the verified backup gate
+      ansible.builtin.set_fact:
+        incident_cleanup_backup_verified: true
+
+- name: Remove stateful incident components from Pangolin
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Require the replacement loopback path
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8790/healthz
+      register: replacement_health
+      until: replacement_health.status == 200
+      retries: 10
+      delay: 2
+
+    - name: Require a verified encrypted off-host backup
+      ansible.builtin.assert:
+        that: hostvars[groups['plan_runners'][0]].incident_cleanup_backup_verified | default(false) | bool
+        fail_msg: Verify an encrypted incident and Helix backup on the plan runner before cleanup.
+
+    - name: Stop and disable retired units
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      failed_when: false
+      loop:
+        - homelab-incidents.service
+        - homelab-incidents-backup.timer
+        - homelab-incidents-backup.service
+        - homelab-incidents-aliases.timer
+        - homelab-incidents-aliases.service
+        - homelab-incidents-helix-sync.timer
+        - homelab-incidents-helix-sync.service
+        - helix-cve.service
+
+    - name: Remove retired unit files and drop-ins
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/homelab-incidents.service
+        - /etc/systemd/system/homelab-incidents.service.d
+        - /etc/systemd/system/homelab-incidents-backup.timer
+        - /etc/systemd/system/homelab-incidents-backup.service
+        - /etc/systemd/system/homelab-incidents-aliases.timer
+        - /etc/systemd/system/homelab-incidents-aliases.service
+        - /etc/systemd/system/homelab-incidents-helix-sync.timer
+        - /etc/systemd/system/homelab-incidents-helix-sync.service
+        - /etc/systemd/system/helix-cve.service
+
+    - name: Remove incident state, history, runtime, and old Helix data
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/homelab-incidents
+        - /var/backups/homelab-incidents
+        - /etc/homelab-incidents
+        - /usr/local/lib/homelab-incidents
+        - /var/lib/helix-cve
+        - /var/cache/homelab-tools/helix-cve-data.tar.zst
+        - /var/cache/homelab-tools/helix-cve-image.tar
+        - /var/tmp/homelab-incidents-migration.db.zst
+        - /var/tmp/homelab-incidents-migration.tar.zst
+        - /var/lib/systemd/timers/stamp-homelab-incidents-backup.timer
+        - /var/lib/systemd/timers/stamp-homelab-incidents-aliases.timer
+
+    - name: Remove the retired local Helix image
+      ansible.builtin.command:
+        argv: [docker, image, rm, homelab/helix-cve:1ffadba6124ed]
+      register: retired_helix_image
+      changed_when: retired_helix_image.rc == 0
+      failed_when: false
+
+    - name: Remove the obsolete Helix forwarding account
+      ansible.builtin.user:
+        name: helix-forward
+        state: absent
+        remove: true
+
+    - name: Reload systemd after cleanup
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Prove that no named incident state remains
+      ansible.builtin.shell:
+        cmd: >-
+          set -eu;
+          test -z "$(find /etc /var /usr/local -xdev
+          \( -iname '*homelab-incidents*' -o -iname 'incidents.db*'
+          -o -iname 'helix-cve-data*' -o -iname 'pre-*incident*.db*' \)
+          -print 2>/dev/null)"
+      changed_when: false
+
+    - name: Prove that only the remote incident listener remains
+      ansible.builtin.shell:
+        cmd: >-
+          set -eu;
+          test "$(systemctl is-enabled homelab-incidents.service 2>/dev/null || true)" = not-found;
+          ss -H -ltnp 'sport = :8790' | grep -F 'sshd'
+      changed_when: false
+
+- name: Remove the obsolete Helix-to-Pangolin tunnel
+  hosts: cve_helix_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Stop and disable the retired reverse tunnel
+      ansible.builtin.systemd_service:
+        name: helix-cve-reverse-tunnel.service
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Remove the retired reverse tunnel state
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/helix-cve-reverse-tunnel.service
+        - /var/lib/helix-tunnel
+
+    - name: Reload systemd after tunnel cleanup
+      ansible.builtin.systemd_service:
+        daemon_reload: true

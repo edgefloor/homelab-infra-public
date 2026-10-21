@@ -1,0 +1,19 @@
+{
+    admin off
+    servers {
+        trusted_proxies static 10.42.0.202/32
+        trusted_proxies_strict
+    }
+}
+
+:8080 {
+    @allowed remote_ip 127.0.0.0/8 10.42.0.202/32
+    handle @allowed {
+        reverse_proxy server:8080 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host {http.request.host}
+        }
+    }
+
+    respond 403
+}

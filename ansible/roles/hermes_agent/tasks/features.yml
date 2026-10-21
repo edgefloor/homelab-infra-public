@@ -1,0 +1,24 @@
+---
+- name: Restore declared native Hermes feature dependencies after installation
+  ansible.builtin.command:
+    argv:
+      - '{{ hermes_agent_release_dir }}/venv/bin/python'
+      - -c
+      - |
+        import json, sys
+        from tools.lazy_deps import ensure, feature_missing
+        features = json.loads(sys.argv[1])
+        missing = {feature: feature_missing(feature) for feature in features}
+        for feature in features:
+            ensure(feature, prompt=False)
+        assert not any(feature_missing(feature) for feature in features)
+        print(json.dumps({'restored': [feature for feature in features if missing[feature]]}))
+      - '{{ hermes_agent_required_features | to_json }}'
+  environment:
+    HOME: '{{ hermes_agent_home }}'
+    HERMES_HOME: '{{ hermes_agent_config_home }}'
+    PYTHONPATH: '{{ hermes_agent_release_dir }}'
+  register: hermes_feature_restore
+  changed_when: (hermes_feature_restore.stdout | from_json).restored | length > 0
+  when: hermes_agent_required_features | length > 0
+

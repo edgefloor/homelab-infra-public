@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+restore_helix() {
+  systemctl start helix-cve.service >/dev/null
+}
+trap restore_helix EXIT HUP INT TERM
+systemctl stop helix-cve.service
+tar --create --zstd --file=- --directory=/ \
+  var/lib/helix-cve etc/systemd/system/helix-cve.service

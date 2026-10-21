@@ -1,0 +1,89 @@
+#!/bin/bash
+set -eu
+
+cd "$(dirname "$0")/.."
+wrapper=scripts/homelab-production-deploy
+installer=scripts/install-production-wrapper
+failures=0
+test_tmp=$(mktemp -d)
+trap 'rm -rf "$test_tmp"' EXIT HUP INT TERM
+
+expect_status() {
+  local expected=$1 description=$2
+  shift 2
+  set +e
+  "$@" >"$test_tmp/out" 2>"$test_tmp/err"
+  local actual=$?
+  set -e
+  if [[ $actual -ne $expected ]]; then
+    printf 'not ok - %s (expected %s, got %s)\n' "$description" "$expected" "$actual"
+    failures=$((failures + 1))
+  else
+    printf 'ok - %s\n' "$description"
+  fi
+}
+
+bash -n "$wrapper"
+sh -n "$installer"
+expect_status 64 "positional arguments are rejected before privileged access" bash "$wrapper" unexpected
+expect_status 65 "stdin data is rejected before privileged access" bash -c "printf attack | '$wrapper'"
+expect_status 65 "newline-prefixed stdin is rejected before privileged access" bash -c "printf '\nattack\n' | '$wrapper'"
+expect_status 65 "an empty pipe is rejected without waiting for content" bash -c ": | '$wrapper'"
+expect_status 65 "a pipe held open for a delayed writer is rejected immediately" bash -c \
+  "d=\$(mktemp -d); mkfifo \"\$d/f\"; exec 3<>\"\$d/f\"; '$wrapper' <&3; rc=\$?; exec 3>&-; rm -rf \"\$d\"; exit \$rc"
+expect_status 65 "a regular file is rejected before privileged access" bash "$wrapper" </etc/hosts
+expect_status 77 "a repository checkout cannot act as the installed wrapper" bash "$wrapper" </dev/null
+expect_status 77 "caller environment cannot select paths or targets" env \
+  HOMELAB_STATE_KEY=attacker HOMELAB_EXPECTED_REF=refs/heads/evil \
+  HOMELAB_CONFIG_PATH=/tmp/attacker bash "$wrapper" </dev/null
+
+for fixed in \
+  'readonly WRAPPER_PATH=/usr/local/sbin/homelab-production-deploy' \
+  'readonly PAYLOAD_PATH=/usr/local/libexec/homelab-production-phase1' \
+  'readonly CONFIG_PATH=/etc/homelab-production/deployment.conf' \
+  'readonly REPOSITORY_PATH=/srv/homelab-production/repository' \
+  'readonly REPOSITORY_ID=edgefloor/homelab-infra' \
+  'readonly EXPECTED_REF=refs/heads/main' \
+  'readonly STATE_KEY=homelab-infra/production/tofu.tfstate' \
+  'readonly LOCK_PATH=/run/lock/homelab-production-deploy.lock'
+do
+  grep -Fqx "$fixed" "$wrapper" || { printf 'not ok - missing fixed contract: %s\n' "$fixed"; failures=$((failures + 1)); }
+done
+
+grep -Fq 'secure_root_file "$CONFIG_PATH"' "$wrapper"
+grep -Fq 'secure_root_file "$PAYLOAD_PATH"' "$wrapper"
+grep -Fq '/usr/bin/env -i' "$wrapper"
+grep -Fq '[[ -f "$path" && ! -L "$path" ]]' "$wrapper"
+grep -Fq '[[ "$uid" == 0 ]]' "$wrapper"
+grep -Fq "8#022" "$wrapper"
+echo 'ok - root ownership, regular-file, symlink, and write-mode guards are present'
+
+wrapper_guard=$(grep -n 'secure_root_file "$WRAPPER_PATH"' "$wrapper" | cut -d: -f1)
+stdin_guard=$(grep -n '/dev/fd/0 -ef /dev/null' "$wrapper" | cut -d: -f1)
+config_guard=$(grep -n 'secure_root_file "$CONFIG_PATH"' "$wrapper" | cut -d: -f1)
+payload_guard=$(grep -n 'secure_root_file "$PAYLOAD_PATH"' "$wrapper" | cut -d: -f1)
+payload_exec=$(grep -n '^exec /usr/bin/env -i' "$wrapper" | cut -d: -f1)
+if (( stdin_guard < wrapper_guard && wrapper_guard < config_guard && config_guard < payload_guard && payload_guard < payload_exec )); then
+  echo 'ok - all integrity guards precede payload execution'
+else
+  echo 'not ok - integrity guards do not precede payload execution'
+  failures=$((failures + 1))
+fi
+
+grep -Fq 'NOPASSWD: /usr/local/sbin/homelab-production-deploy' "$installer"
+grep -Fq 'Defaults:github-runner !setenv,secure_path=/usr/local/bin:/usr/bin:/bin' "$installer"
+if grep -Eq '^[[:space:]]*github-runner ALL=.*NOEXEC' "$installer"; then
+  echo 'not ok - exact sudoers rule must not use NOEXEC'
+  failures=$((failures + 1))
+else
+  echo 'ok - installer emits one compatible zero-argument sudoers allow-list entry'
+fi
+if grep -Eqi '(secret|token|password|credential)[^#]*(/|=)' "$wrapper"; then
+  echo 'not ok - wrapper appears to embed a credential path or value'
+  failures=$((failures + 1))
+else
+  echo 'ok - wrapper embeds no apparent credential path or value'
+fi
+
+(( failures == 0 )) || exit 1
+echo 'production wrapper contract tests passed'

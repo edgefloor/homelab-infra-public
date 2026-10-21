@@ -1,0 +1,9 @@
+---
+- name: Configure Proxmox host integrations
+  hosts: proxmox_hosts
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [proxmox_gpu]
+        cve_provisioning_installations: ["deployment:proxmox-gpu"]

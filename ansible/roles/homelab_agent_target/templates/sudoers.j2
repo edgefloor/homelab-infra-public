@@ -1,0 +1,8 @@
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/local/libexec/homelab-evidence-gateway
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/local/libexec/homelab-coverage-read
+{% if 'matrix-alerts' in homelab_agent_units %}
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/local/libexec/homelab-alert-read
+{% endif %}
+{% if inventory_hostname == 'proxmox' %}
+{{ homelab_agent_target_user }} ALL=(root) NOPASSWD: /usr/local/libexec/homelab-guest-agent
+{% endif %}

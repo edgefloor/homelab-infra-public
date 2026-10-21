@@ -1,0 +1,21 @@
+[Unit]
+Description=Refresh the local CoreDNS advertising blocklist
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=coredns
+Group=coredns
+ExecStart=/usr/local/libexec/coredns-adblock-update --refresh
+TimeoutStartSec=120
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/coredns/adblock
+UMask=0027

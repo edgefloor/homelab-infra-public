@@ -1,0 +1,10 @@
+[Unit]
+Description=Create daily off-host incident and Helix backups
+
+[Timer]
+OnCalendar={{ incident_backup_schedule }}
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

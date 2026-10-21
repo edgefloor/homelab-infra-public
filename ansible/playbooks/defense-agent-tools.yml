@@ -1,0 +1,101 @@
+---
+- name: Compile the complete defensive target inventory
+  hosts: localhost
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  gather_facts: false
+  tasks:
+    - name: Build target and coverage contracts
+      ansible.builtin.command:
+        argv: [uv, run, --with, pyyaml, python, scripts/build_security_config.py, --output, /tmp/homelab-security-config]
+        chdir: "{{ playbook_dir }}/../.."
+      changed_when: false
+
+- name: Enroll the controller's own bounded evidence endpoint
+  hosts: hermes_agents
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the existing controller public key
+      ansible.builtin.slurp:
+        src: /var/lib/homelab-investigator/.ssh/id_ed25519.pub
+      register: defense_controller_key
+
+    - name: Install the controller endpoint
+      ansible.builtin.include_role:
+        name: homelab_agent_target
+      vars:
+        homelab_agent_public_key: "{{ defense_controller_key.content | b64decode | trim }}"
+
+- name: Update bounded defensive agent endpoints
+  hosts: homelab_agent_targets
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  become: true
+  gather_facts: false
+  vars:
+    homelab_agent_target_user: homelab-agent
+  tasks:
+    - name: Create the defensive policy directory on newly enrolled targets
+      ansible.builtin.file:
+        path: /etc/homelab-update-monitor
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Install the tested forced command and evidence gateway
+      ansible.builtin.copy:
+        src: "../roles/homelab_agent_target/files/{{ item.src }}"
+        dest: "/usr/local/libexec/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0755'
+        backup: true
+      loop:
+        - {src: homelab_agent_remote.py, dest: homelab-agent-remote}
+        - {src: homelab_evidence_gateway.py, dest: homelab-evidence-gateway}
+
+    - name: Keep root execution disabled while retaining independent recovery
+      ansible.builtin.copy:
+        src: ../roles/update_monitor/files/homelab_defense.py
+        dest: /usr/local/libexec/homelab-defense
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Converge disabled repository-owned action policy
+      ansible.builtin.copy:
+        src: ../roles/update_monitor/files/defense-policy.json
+        dest: /etc/homelab-update-monitor/defense-policy.json
+        owner: root
+        group: root
+        mode: '0600'
+        backup: true
+
+    - name: Install the external guest router
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_target/files/homelab_guest_agent.py
+        dest: /usr/local/libexec/homelab-guest-agent
+        mode: '0755'
+      when: inventory_hostname == 'proxmox'
+
+    - name: Authorize only the bounded endpoint programs without mutation privileges
+      ansible.builtin.template:
+        src: ../roles/homelab_agent_target/templates/sudoers.j2
+        dest: /etc/sudoers.d/homelab-agent
+        owner: root
+        group: root
+        mode: '0440'
+        validate: /usr/sbin/visudo -cf %s

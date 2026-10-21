@@ -1,0 +1,57 @@
+---
+- name: Install Hermes and its homelab capability access
+  hosts: hermes_agents
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  become: true
+  roles:
+    - common_baseline
+    - hermes_agent
+    - homelab_agent
+
+- name: Install restricted homelab agent access on managed services
+  hosts: homelab_agent_targets
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  become: true
+  vars:
+    homelab_agent_public_key: "{{ hostvars['hermes-agent']['homelab_agent_public_key'] }}"
+  roles:
+    - homelab_agent_target
+
+- name: Update controller and managed evidence endpoints
+  ansible.builtin.import_playbook: defense-agent-tools.yml
+
+- name: Install the homelab on-call capability for Hermes
+  hosts: hermes_agents
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  become: true
+  vars:
+    hermes_agent_config: "{{ lookup('env', 'HERMES_AGENT_CONFIG') }}"
+    hermes_agent_environment: "{{ lookup('env', 'HERMES_AGENT_ENV') }}"
+    hermes_agent_auth: "{{ lookup('env', 'HERMES_AGENT_AUTH') }}"
+  roles:
+    - hermes_agent
+    - role: homelab_agent_service
+      when: homelab_legacy_cve_enabled | default(false) | bool
+
+- name: Remove the retired controller runtime from the plan runner
+  hosts: plan_runners
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  become: true
+  roles:
+    - homelab_agent_controller_cleanup

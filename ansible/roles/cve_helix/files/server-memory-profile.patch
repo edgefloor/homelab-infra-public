@@ -1,0 +1,90 @@
+--- a/crates/db/src/lib.rs
++++ b/crates/db/src/lib.rs
+@@ -993,8 +993,86 @@
+     /// Opens a database for a transport server that owns its metrics recorder.
+     #[doc(hidden)]
+     pub async fn open_for_server(source: HelixDbSource) -> Result<Self> {
++        use crate::config::{
++            CacheConfig, CacheMode, FtsMemoryCacheConfig, SearchIndexBackfillLimits,
++            SearchIndexBatchLimits, SlateMemoryCacheConfig,
++        };
++
++        // Runtime budgets for the homelab 3 GiB server image. Keep persisted
++        // formats, durability, warm policies, and query behavior unchanged.
++        const MIB: u64 = 1024 * 1024;
++        let current = CacheConfig::default();
++        let CacheMode::Memory { slate_warm, fts, .. } = current.mode().clone() else {
++            panic!("pinned default cache mode changed");
++        };
++        let fts = fts.expect("pinned default FTS cache missing");
++        let cache = current.with_mode(CacheMode::Memory {
++            slate_db: SlateMemoryCacheConfig::try_new(128 * MIB, 64 * MIB)
++                .expect("fixed Slate cache budgets are valid"),
++            slate_warm,
++            fts: Some(
++                FtsMemoryCacheConfig::try_new(
++                    32 * MIB,
++                    fts.warm().clone(),
++                    fts.generation_grace_period().as_secs(),
++                )
++                .expect("fixed FTS cache budget is valid"),
++            ),
++        });
++        let settings = slatedb::Settings {
++            max_unflushed_bytes: (256 * MIB) as usize,
++            ..slatedb::Settings::default()
++        };
++        let config = DbConfig::new().with_cache(cache).with_slate_settings(settings);
++        // Both index builders scan complete property rows before projecting
++        // indexed fields. Keep a whole evidence row within their input budget.
++        let input_bytes = std::num::NonZeroU64::new(16 * MIB)
++            .expect("fixed index input budget is nonzero");
++        let secondary = config.secondary_index_lifecycle().with_max_input_bytes(input_bytes);
++        let backfill = config.search_index_backfill();
++        let batch = backfill.batch();
++        let batch = SearchIndexBatchLimits::try_new(
++            batch.max_entities(),
++            input_bytes,
++            batch.max_output_operations(),
++            batch.max_output_bytes(),
++            batch.max_single_vector_output_bytes(),
++        )
++        .expect("fixed index batch budgets are valid");
++        let backfill = SearchIndexBackfillLimits::try_new(
++            batch,
++            backfill.edge_property_read_batch(),
++            backfill.text_artifacts(),
++            backfill.text_compaction(),
++        )
++        .expect("fixed search backfill budgets are valid");
++        let config = config
++            .with_secondary_index_lifecycle_tuning(secondary)
++            .with_search_index_backfill_limits(backfill);
+         let (path, object_store) = source.into_parts()?;
+-        Self::open_writer_inner(path, object_store, DbConfig::new()).await
++        let db = Self::open_writer_inner(path, object_store, config).await?;
++
++        // Read back the configuration retained by the opened database handle.
++        let actual = db.config().db();
++        let CacheMode::Memory { slate_db, fts, .. } = actual.cache().mode() else {
++            unreachable!("fixed server cache mode changed during open");
++        };
++        let vector = actual.cache().vector_memory();
++        let slate = actual.slate().to_writer_settings(actual.cache().object_store_cache());
++        tracing::info!(
++            memory_profile = "homelab-3g-v2",
++            slate_block_bytes = slate_db.block_bytes(),
++            slate_metadata_bytes = slate_db.metadata_bytes(),
++            fts_bytes = fts.as_ref().expect("opened FTS cache missing").memory_bytes(),
++            vector_bytes = vector.budget().bytes().expect("vector budget is bounded"),
++            simhasher_bytes = vector.simhasher_cache().bytes(),
++            max_unflushed_bytes = slate.max_unflushed_bytes,
++            l0_sst_bytes = slate.l0_sst_size_bytes,
++            secondary_input_bytes = actual.secondary_index_lifecycle().max_input_bytes().get(),
++            search_backfill_input_bytes = actual.search_index_backfill().batch().max_input_bytes().get(),
++            "opened database memory settings"
++        );
++        Ok(db)
+     }
+ 
+     #[cfg(test)]

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check software inventory freshness hourly
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+Unit=homelab-sbom-freshness.service
+
+[Install]
+WantedBy=timers.target

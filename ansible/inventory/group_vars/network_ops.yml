@@ -1,0 +1,9 @@
+---
+# Entries in allowlist and extra_domains include the named domain itself.
+# Allowlist entries also exempt all subdomains; extra_domains are exact names.
+coredns_adblock:
+  sources:
+    - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+  allowlist: []
+  extra_domains:
+    - rapidfire.cc

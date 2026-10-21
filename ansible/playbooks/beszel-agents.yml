@@ -1,0 +1,6 @@
+---
+- name: Install outbound Beszel agents
+  hosts: beszel_agents
+  become: true
+  roles:
+    - beszel_agent

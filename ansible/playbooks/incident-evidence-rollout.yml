@@ -1,0 +1,115 @@
+---
+- name: Update evidence projection without enabling investigations
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Keep the normal worker stopped and disabled
+      ansible.builtin.systemd_service:
+        name: zag-ops-worker.service
+        state: stopped
+        enabled: false
+    - name: Install bounded nested evidence projection
+      ansible.builtin.copy:
+        src: ../roles/vulnerability_incidents/files/investigation_evidence.py
+        dest: /usr/local/lib/zag-ops/investigation_evidence.py
+        mode: '0644'
+        backup: true
+
+- name: Update acknowledged snapshot evidence on enrolled sources
+  hosts: beszel_agents:plan_runners
+  become: true
+  gather_facts: false
+  serial: 3
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Reject containers below 200 at deployment
+      ansible.builtin.assert:
+        that: inventory_hostname != item.name
+      loop: "{{ (lookup('file', '../../inventory/workloads.yml') | from_yaml).inventory.workloads | selectattr('id', 'lt', 200) | list }}"
+      loop_control:
+        label: "{{ item.id }}"
+    - name: Require an idle scanner before changing its snapshot writer
+      ansible.builtin.command: systemctl is-active homelab-cve-monitor.service
+      register: scanner_state
+      changed_when: false
+      failed_when: scanner_state.stdout in ['active', 'activating']
+    - name: Install the acknowledged snapshot writer
+      ansible.builtin.copy:
+        src: ../roles/update_monitor/files/homelab_incident_snapshot.py
+        dest: /usr/local/libexec/homelab_incident_snapshot.py
+        mode: '0755'
+        backup: true
+    - name: Read only the latest centrally acknowledged source snapshot for migration
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, json, sqlite3, sys, zlib
+            with sqlite3.connect('file:/var/lib/homelab-incidents/incidents.db?mode=ro', uri=True) as db:
+                row = db.execute('SELECT s.hash,s.payload FROM scans s JOIN sources a ON s.source=a.id AND s.generation=a.generation AND s.sequence=a.sequence WHERE a.id=?', (sys.argv[1],)).fetchone()
+                if row is None:
+                    print('null')
+                else:
+                    raw = zlib.decompress(row[1]) if isinstance(row[1],bytes) else row[1].encode()
+                    assert len(raw) <= 32*1024*1024
+                    assert hashlib.sha256(raw).hexdigest() == row[0]
+                    print(json.dumps({'sha256':row[0], 'snapshot':json.loads(raw)}, separators=(',',':')))
+          - "{{ inventory_hostname }}"
+      delegate_to: "{{ groups['incident_servers'][0] }}"
+      register: acknowledged_snapshot
+      changed_when: false
+      no_log: true
+    - name: Restore missing acknowledged evidence without overwriting a newer local receipt
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib, json, os, pathlib, sys, tempfile
+            envelope = json.load(sys.stdin)
+            if envelope is None:
+                print('No acknowledged source snapshot; coverage remains unknown')
+                sys.exit(0)
+            snapshot = envelope['snapshot']
+            config = json.loads(pathlib.Path('/etc/homelab-update-monitor/incident.json').read_text())
+            assert (snapshot['source'],snapshot['generation']) == (config['source'],config['generation'])
+            raw = json.dumps(snapshot, sort_keys=True, separators=(',',':'), allow_nan=False).encode()
+            assert len(raw) <= 32*1024*1024 and hashlib.sha256(raw).hexdigest() == envelope['sha256']
+            target = pathlib.Path('/var/lib/homelab-update-monitor/cve-state.incident-snapshot.json')
+            with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.acknowledged-snapshot-', delete=False) as tmp:
+                tmp.write(json.dumps(envelope, sort_keys=True, separators=(',',':')).encode())
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            try:
+                try:
+                    os.link(tmp.name, target)
+                    print('Acknowledged snapshot restored')
+                except FileExistsError:
+                    print('Existing local acknowledged snapshot preserved')
+            finally:
+                pathlib.Path(tmp.name).unlink()
+        stdin: "{{ acknowledged_snapshot.stdout }}"
+      register: snapshot_restored
+      changed_when: "'snapshot restored' in snapshot_restored.stdout"
+      no_log: true
+    - name: Install consistent coverage reads
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_target/files/homelab_evidence_gateway.py
+        dest: /usr/local/libexec/homelab-evidence-gateway
+        mode: '0755'
+        backup: true
+    - name: Verify the gateway and writer compile
+      ansible.builtin.command:
+        argv: [python3, -c, "from pathlib import Path; [compile(Path(p).read_text(), p, 'exec') for p in ('/usr/local/libexec/homelab-evidence-gateway','/usr/local/libexec/homelab_incident_snapshot.py')]"]
+      changed_when: false

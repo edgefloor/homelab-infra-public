@@ -1,0 +1,213 @@
+---
+- name: Provision the fresh managed news embeddings guest
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  no_log: true
+  environment:
+    TMPDIR: /dev/shm
+    NEWS_EMBEDDINGS_PROXMOX_PASSWORD: "{{ lookup('ansible.builtin.env', 'PROXMOX_ROOT_PW') }}"
+  vars:
+    news_embeddings_tofu_root: /run/news-embeddings-tofu-provision
+  tasks:
+    - name: Provision with guaranteed temporary-file cleanup
+      block:
+        - name: Remove any stale isolated provisioning root
+          ansible.builtin.file:
+            path: "{{ news_embeddings_tofu_root }}"
+            state: absent
+
+        - name: Create the isolated provisioning root
+          ansible.builtin.file:
+            path: "{{ news_embeddings_tofu_root }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0700'
+
+        - name: Stage the reviewed Proxmox root
+          ansible.builtin.copy:
+            src: "../../tofu/proxmox/{{ item }}"
+            dest: "{{ news_embeddings_tofu_root }}/{{ item }}"
+            owner: root
+            group: root
+            mode: '0600'
+          loop: >-
+            {{ (query('ansible.builtin.fileglob', playbook_dir + '/../../tofu/proxmox/*.tf')
+                | map('basename') | sort | list) + ['.terraform.lock.hcl'] }}
+
+        - name: Require the existing root credential for GPU device creation
+          ansible.builtin.assert:
+            that:
+              - lookup('ansible.builtin.env', 'PROXMOX_ROOT_PW') | length > 0
+            fail_msg: GPU device creation requires the existing root credential.
+
+        - name: Stage temporary root authentication for this guarded GPU create
+          ansible.builtin.copy:
+            dest: "{{ news_embeddings_tofu_root }}/root-tofu"
+            owner: root
+            group: root
+            mode: '0700'
+            content: |
+              #!/bin/sh
+              set -eu
+              set -a
+              . /etc/homelab-tofu-proxmox.env
+              set +a
+              unset PROXMOX_VE_API_TOKEN
+              export PROXMOX_VE_USERNAME=root@pam
+              export PROXMOX_VE_PASSWORD="$NEWS_EMBEDDINGS_PROXMOX_PASSWORD"
+              exec /usr/bin/tofu "$@"
+
+        - name: Initialize the isolated provisioning root
+          ansible.builtin.command:
+            argv: ["{{ news_embeddings_tofu_root }}/root-tofu", init, -reconfigure, -input=false]
+            chdir: "{{ news_embeddings_tofu_root }}"
+          changed_when: false
+
+        - name: Plan the fresh news embeddings guest
+          ansible.builtin.command:
+            argv: ["{{ news_embeddings_tofu_root }}/root-tofu", plan, -input=false, -no-color, -detailed-exitcode, "-out={{ news_embeddings_tofu_root }}/provision.tfplan"]
+            chdir: "{{ news_embeddings_tofu_root }}"
+          register: news_embeddings_tofu_plan
+          changed_when: news_embeddings_tofu_plan.rc == 2
+          failed_when: news_embeddings_tofu_plan.rc not in [0, 2]
+
+        - name: Read the saved news_embeddings plan as JSON
+          ansible.builtin.command:
+            argv: ["{{ news_embeddings_tofu_root }}/root-tofu", show, -json, "{{ news_embeddings_tofu_root }}/provision.tfplan"]
+            chdir: "{{ news_embeddings_tofu_root }}"
+          register: news_embeddings_tofu_plan_json
+          changed_when: false
+          no_log: true
+
+        - name: Select actual resource changes in the saved plan
+          ansible.builtin.set_fact:
+            news_embeddings_plan_changes: >-
+              {{ ((news_embeddings_tofu_plan_json.stdout | from_json).resource_changes | default([]))
+                 | rejectattr('change.actions', 'equalto', ['no-op']) | list }}
+          no_log: true
+
+        - name: Require an isolated news embeddings create or a converged root
+          ansible.builtin.assert:
+            that:
+              - >-
+                (news_embeddings_tofu_plan.rc == 0 and news_embeddings_plan_changes | length == 0) or
+                (news_embeddings_tofu_plan.rc == 2 and news_embeddings_plan_changes | length == 1)
+              - >-
+                news_embeddings_tofu_plan.rc == 0 or
+                news_embeddings_plan_changes[0].address == 'proxmox_virtual_environment_container.managed["news_embeddings"]'
+              - news_embeddings_tofu_plan.rc == 0 or news_embeddings_plan_changes[0].change.actions == ['create']
+              - news_embeddings_tofu_plan.rc == 0 or news_embeddings_plan_changes[0].change.after.vm_id | int == 217
+            fail_msg: "Refusing a Proxmox plan that changes anything except the fresh LXC 217."
+
+        - name: Apply the exact reviewed news_embeddings plan
+          ansible.builtin.command:
+            argv: ["{{ news_embeddings_tofu_root }}/root-tofu", apply, -input=false, -no-color, -auto-approve, "{{ news_embeddings_tofu_root }}/provision.tfplan"]
+            chdir: "{{ news_embeddings_tofu_root }}"
+          when: news_embeddings_tofu_plan.rc == 2
+
+        - name: Require the Proxmox root to be converged
+          ansible.builtin.command:
+            argv: ["{{ news_embeddings_tofu_root }}/root-tofu", plan, -input=false, -no-color, -detailed-exitcode]
+            chdir: "{{ news_embeddings_tofu_root }}"
+          register: news_embeddings_tofu_final_plan
+          changed_when: false
+          failed_when: news_embeddings_tofu_final_plan.rc != 0
+      always:
+        - name: Remove the private provisioning root and saved plan
+          ansible.builtin.file:
+            path: "{{ news_embeddings_tofu_root }}"
+            state: absent
+
+- name: Bootstrap administration access in the fresh news embeddings guest
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    news_embeddings_guest_id: '217'
+    news_embeddings_admin_user: homelab-admin
+    news_embeddings_admin_public_key: >-
+      {{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'HOME') + '/.ssh/id_ed25519.pub') }}
+  tasks:
+    - name: Read the fresh guest configuration
+      ansible.builtin.command:
+        argv: [pct, config, "{{ news_embeddings_guest_id }}"]
+      register: news_embeddings_guest_configuration
+      changed_when: false
+
+    - name: Require the exact fresh managed guest
+      ansible.builtin.assert:
+        that:
+          - "'hostname: news-embeddings' in news_embeddings_guest_configuration.stdout"
+          - "'ip=10.42.0.217/24' in news_embeddings_guest_configuration.stdout"
+          - "'unprivileged: 1' in news_embeddings_guest_configuration.stdout"
+        fail_msg: Refusing to bootstrap a guest that does not match managed LXC 217.
+
+    - name: Refresh package metadata in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, apt-get, update]
+      changed_when: false
+
+    - name: Install administration prerequisites in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, apt-get, install, -y, python3, sudo, openssh-server]
+      register: news_embeddings_bootstrap_packages
+      changed_when: "'0 upgraded, 0 newly installed' not in news_embeddings_bootstrap_packages.stdout"
+
+    - name: Inspect the administration account
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, id, -u, "{{ news_embeddings_admin_user }}"]
+      register: news_embeddings_admin_account
+      changed_when: false
+      failed_when: false
+
+    - name: Create the administration account
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, useradd, --create-home, --shell, /bin/bash, "{{ news_embeddings_admin_user }}"]
+      when: news_embeddings_admin_account.rc != 0
+
+    - name: Create the administration SSH directory
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, install, -d, -m, '0700', -o, "{{ news_embeddings_admin_user }}", -g, "{{ news_embeddings_admin_user }}", "/home/{{ news_embeddings_admin_user }}/.ssh"]
+      changed_when: false
+
+    - name: Install the administration public key
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, tee, "/home/{{ news_embeddings_admin_user }}/.ssh/authorized_keys"]
+        stdin: "{{ news_embeddings_admin_public_key }}\n"
+      changed_when: false
+      no_log: true
+
+    - name: Protect the administration public key
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, chown, "{{ news_embeddings_admin_user }}:{{ news_embeddings_admin_user }}", "/home/{{ news_embeddings_admin_user }}/.ssh/authorized_keys"]
+      changed_when: false
+
+    - name: Set the administration public key mode
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, chmod, '0600', "/home/{{ news_embeddings_admin_user }}/.ssh/authorized_keys"]
+      changed_when: false
+
+    - name: Install the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, tee, "/etc/sudoers.d/{{ news_embeddings_admin_user }}"]
+        stdin: "{{ news_embeddings_admin_user }} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+      changed_when: false
+
+    - name: Protect the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, chmod, '0440', "/etc/sudoers.d/{{ news_embeddings_admin_user }}"]
+      changed_when: false
+
+    - name: Validate the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, visudo, -cf, "/etc/sudoers.d/{{ news_embeddings_admin_user }}"]
+      changed_when: false
+
+    - name: Enable SSH in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ news_embeddings_guest_id }}", --, systemctl, enable, --now, ssh.service]
+      changed_when: false

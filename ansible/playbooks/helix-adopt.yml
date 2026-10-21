@@ -1,0 +1,98 @@
+---
+- name: Adopt the dedicated Helix LXC into OpenTofu
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    helix_tofu_root: /tmp/helix-tofu-adoption
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Create the isolated adoption root
+      ansible.builtin.file:
+        path: "{{ helix_tofu_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Stage the reviewed Proxmox root
+      ansible.builtin.copy:
+        src: "../../tofu/proxmox/{{ item }}"
+        dest: "{{ helix_tofu_root }}/{{ item }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop: >-
+        {{ (query('ansible.builtin.fileglob', playbook_dir + '/../../tofu/proxmox/*.tf')
+            | map('basename') | sort | list) + ['.terraform.lock.hcl'] }}
+
+    - name: Initialize the isolated adoption root
+      ansible.builtin.command:
+        argv: [homelab-tofu, init, -reconfigure, -input=false]
+        chdir: "{{ helix_tofu_root }}"
+      changed_when: false
+
+    - name: Read current OpenTofu ownership
+      ansible.builtin.command:
+        argv: [homelab-tofu, state, list]
+        chdir: "{{ helix_tofu_root }}"
+      register: helix_tofu_state
+      changed_when: false
+
+    - name: Import LXC 212 into the protected state
+      ansible.builtin.command:
+        argv:
+          - homelab-tofu
+          - import
+          - -input=false
+          - 'proxmox_virtual_environment_container.managed["helix"]'
+          - node1/212
+        chdir: "{{ helix_tofu_root }}"
+      when: "'proxmox_virtual_environment_container.managed[\"helix\"]' not in helix_tofu_state.stdout_lines"
+
+    - name: Plan the adopted guest reconciliation
+      ansible.builtin.command:
+        argv: [homelab-tofu, plan, -input=false, -no-color, -detailed-exitcode, -out=/tmp/helix-adoption.tfplan]
+        chdir: "{{ helix_tofu_root }}"
+      register: helix_tofu_plan
+      changed_when: helix_tofu_plan.rc == 2
+      failed_when: >-
+        helix_tofu_plan.rc not in [0, 2] or
+        'must be replaced' in helix_tofu_plan.stdout or
+        helix_tofu_plan.stdout is search('Plan: .* [1-9][0-9]* to destroy')
+
+    - name: Apply the exact in-place adoption plan
+      ansible.builtin.command:
+        argv: [homelab-tofu, apply, -input=false, -no-color, -auto-approve, /tmp/helix-adoption.tfplan]
+        chdir: "{{ helix_tofu_root }}"
+      when: helix_tofu_plan.rc == 2
+
+    - name: Require the adopted guest to be converged
+      ansible.builtin.command:
+        argv: [homelab-tofu, plan, -input=false, -no-color, -detailed-exitcode]
+        chdir: "{{ helix_tofu_root }}"
+      register: helix_tofu_final_plan
+      changed_when: false
+      failed_when: helix_tofu_final_plan.rc != 0
+
+    - name: Remove the isolated adoption root
+      ansible.builtin.file:
+        path: "{{ helix_tofu_root }}"
+        state: absent
+
+- name: Include Helix in the managed guest backup
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  roles:
+    - managed_backup_membership

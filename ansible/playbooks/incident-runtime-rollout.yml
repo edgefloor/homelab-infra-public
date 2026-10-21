@@ -1,0 +1,190 @@
+---
+- name: Stop investigation execution before the coordinated runtime update
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Keep investigations disabled
+      ansible.builtin.systemd_service:
+        name: zag-ops-worker.service
+        state: stopped
+        enabled: false
+
+- name: Back up and update the incident API without changing enrollment
+  hosts: incident_servers
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Create a private rollback directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/backups/homelab-incidents
+        prefix: runtime-rollout-
+      register: incident_rollback
+    - name: Back up the deployed runtime
+      ansible.builtin.copy:
+        src: "/usr/local/lib/homelab-incidents/{{ item }}.py"
+        dest: "{{ incident_rollback.path }}/{{ item }}.py"
+        remote_src: true
+        mode: '0600'
+      loop: [incident_store, incident_service, incident_maintenance, incident_admin]
+    - name: Back up SQLite and verify there is no active investigation
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import sqlite3, sys
+            with sqlite3.connect('file:/var/lib/homelab-incidents/incidents.db?mode=ro', uri=True) as source:
+                assert source.execute("SELECT count(*) FROM jobs WHERE state='running'").fetchone()[0] == 0
+                with sqlite3.connect(sys.argv[1]) as backup:
+                    source.backup(backup)
+                    assert backup.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+            print('Consistent rollback snapshot saved; no running jobs')
+          - "{{ incident_rollback.path }}/incidents.db"
+      changed_when: true
+    - name: Stage the reviewed incident runtime
+      ansible.builtin.copy:
+        src: "../roles/vulnerability_incidents/files/{{ item }}.py"
+        dest: "{{ incident_rollback.path }}/new_{{ item }}.py"
+        mode: '0600'
+      loop: [incident_store, incident_service, incident_maintenance, incident_admin, artifact_cache]
+    - name: Rehearse the additive schema migration on a disposable copy
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import importlib.util, pathlib, sqlite3, sys
+            directory = pathlib.Path(sys.argv[1])
+            tables = ('incidents', 'occurrences', 'sources', 'scans', 'outbox', 'jobs', 'assessments')
+            with sqlite3.connect(directory/'incidents.db') as backup, sqlite3.connect(directory/'rehearsal.db') as rehearsal:
+                backup.backup(rehearsal)
+                before = {table: backup.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in tables}
+            spec = importlib.util.spec_from_file_location('reviewed_store', directory/'new_incident_store.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            store = module.IncidentStore(directory/'rehearsal.db')
+            assert store.db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+            assert not store.db.execute('PRAGMA foreign_key_check').fetchall()
+            after = {table: store.db.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in tables}
+            assert before == after, (before, after)
+            store.close()
+            for suffix in ('', '-wal', '-shm'):
+                (directory/('rehearsal.db'+suffix)).unlink(missing_ok=True)
+            print('Migration preserved all existing record counts:', after)
+          - "{{ incident_rollback.path }}"
+      changed_when: false
+    - name: Update the runtime while maintenance and the API are stopped
+      block:
+        - name: Pause alias maintenance
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: stopped
+          loop: [homelab-incidents-aliases.timer, homelab-incidents-aliases.service, homelab-incidents.service]
+        - name: Install the reviewed runtime
+          ansible.builtin.copy:
+            src: "{{ incident_rollback.path }}/new_{{ item }}.py"
+            dest: "/usr/local/lib/homelab-incidents/{{ item }}.py"
+            remote_src: true
+            mode: '0644'
+          loop: [incident_store, incident_service, incident_maintenance, incident_admin, artifact_cache]
+      always:
+        - name: Resume the API and maintenance schedule
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: started
+          loop: [homelab-incidents.service, homelab-incidents-aliases.timer]
+    - name: Verify the incident API health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8790/healthz
+      register: incident_health
+      until: incident_health.status == 200
+      retries: 5
+      delay: 2
+    - name: Report the rollback location
+      ansible.builtin.debug:
+        var: incident_rollback.path
+
+- name: Update the isolated operational runtime without personal profile changes
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Create a private operational rollback directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/backups
+        prefix: zag-runtime-rollout-
+      register: zag_rollback
+    - name: Back up the deployed operational runtime
+      ansible.builtin.copy:
+        src: "/usr/local/lib/zag-ops/{{ item }}.py"
+        dest: "{{ zag_rollback.path }}/{{ item }}.py"
+        remote_src: true
+        mode: '0600'
+      loop: [incident_client, zag_ops_worker, zag_model_proxy]
+    - name: Back up the operational profile
+      ansible.builtin.copy:
+        src: /var/lib/zag-ops/.hermes/config.yaml
+        dest: "{{ zag_rollback.path }}/config.yaml"
+        remote_src: true
+        mode: '0600'
+    - name: Read the operational profile only
+      ansible.builtin.slurp:
+        src: /var/lib/zag-ops/.hermes/config.yaml
+      register: ops_profile
+    - name: Disable implicit tool-discovery helpers in the operational profile
+      ansible.builtin.copy:
+        content: "{{ (ops_profile.content | b64decode | from_yaml) | combine({'tools': {'tool_search': {'enabled': 'off'}}}, recursive=true) | to_nice_yaml }}"
+        dest: /var/lib/zag-ops/.hermes/config.yaml
+        owner: root
+        group: zag-ops
+        mode: '0640'
+    - name: Install the reviewed operational runtime
+      ansible.builtin.copy:
+        src: "../roles/vulnerability_incidents/files/{{ item }}.py"
+        dest: "/usr/local/lib/zag-ops/{{ item }}.py"
+        mode: '0644'
+      loop: [incident_client, investigation_evidence, zag_ops_worker, zag_model_proxy]
+    - name: Remove the retired worker writing rules
+      ansible.builtin.file:
+        dest: /etc/zag-ops/writing-style.md
+        state: absent
+    - name: Verify actual native tools and memory isolation without a model call
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/lib/zag-ops/zag_ops_worker.py, --self-test]
+      become_user: zag-ops
+      environment:
+        HOME: /var/lib/zag-ops
+        HERMES_HOME: /var/lib/zag-ops/.hermes
+        PYTHONPATH: /usr/local/lib/hermes-agent:/usr/local/lib/zag-ops
+      changed_when: false
+    - name: Restart the model transport with the matching budget contract
+      ansible.builtin.systemd_service:
+        name: zag-model.service
+        state: restarted
+    - name: Verify investigations remain stopped and disabled
+      ansible.builtin.systemd_service:
+        name: zag-ops-worker.service
+        state: stopped
+        enabled: false
+    - name: Report the operational rollback location
+      ansible.builtin.debug:
+        var: zag_rollback.path

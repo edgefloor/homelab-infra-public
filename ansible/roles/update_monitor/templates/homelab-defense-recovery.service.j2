@@ -1,0 +1,10 @@
+[Unit]
+Description=Recover interrupted or expired verified defensive actions
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/homelab-defense
+StandardInput=null
+UMask=0077
+TimeoutStartSec=10min
+Nice=10

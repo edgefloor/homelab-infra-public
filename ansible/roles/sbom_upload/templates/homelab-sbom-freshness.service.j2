@@ -1,0 +1,11 @@
+[Unit]
+Description=Require complete Dependency-Track uploads within 36 hours
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-sbom-upload --config {{ sbom_upload_config_dir }}/config.json --check
+User=root
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

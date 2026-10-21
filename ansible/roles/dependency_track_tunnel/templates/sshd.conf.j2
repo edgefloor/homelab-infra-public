@@ -1,0 +1,17 @@
+# Only the dedicated Dependency-Track upload tunnel account is affected.
+Match User {{ dependency_track_tunnel_edge_user }}
+    AuthenticationMethods publickey
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AllowTcpForwarding remote
+    PermitListen 127.0.0.1:{{ dependency_track_tunnel_edge_port }}
+    PermitOpen none
+    GatewayPorts no
+    AllowStreamLocalForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTTY no
+    PermitTunnel no
+    PermitUserRC no
+    MaxSessions 0
+Match all

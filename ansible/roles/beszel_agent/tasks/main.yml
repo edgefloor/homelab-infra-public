@@ -1,0 +1,201 @@
+---
+- name: Inspect existing Beszel agent credentials
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/beszel-agent/token
+    - /etc/beszel-agent/hub-key
+  register: beszel_agent_existing_credentials
+
+- name: Require existing or supplied Beszel agent credentials
+  ansible.builtin.assert:
+    that:
+      - >-
+        beszel_agent_token | length > 0 or
+        beszel_agent_existing_credentials.results[0].stat.exists
+      - >-
+        beszel_agent_hub_public_key | length > 0 or
+        beszel_agent_existing_credentials.results[1].stat.exists
+    fail_msg: >-
+      Supply the missing Beszel enrollment material through BESZEL_AGENT_TOKEN
+      and BESZEL_HUB_PUBLIC_KEY. Existing root-owned credential files are
+      preserved during ordinary upgrades.
+  no_log: true
+
+- name: Create the Beszel group
+  ansible.builtin.group:
+    name: beszel
+    system: true
+
+- name: Create the Beszel user
+  ansible.builtin.user:
+    name: beszel
+    group: beszel
+    home: /var/lib/beszel-agent
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+
+- name: Read local groups for optional hardware and container access
+  ansible.builtin.getent:
+    database: group
+
+- name: Add Beszel to available monitoring groups
+  ansible.builtin.user:
+    name: beszel
+    groups: >-
+      {{ ['disk', 'docker'] | select('in', ansible_facts.getent_group.keys()) | join(',') }}
+    append: true
+  when: >-
+    ['disk', 'docker'] | select('in', ansible_facts.getent_group.keys()) | list | length > 0
+
+- name: Install smartmontools when SMART monitoring is enabled
+  ansible.builtin.apt:
+    name: smartmontools
+    state: present
+    update_cache: true
+  when: beszel_agent_smart_devices | length > 0
+
+- name: Create Beszel agent directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /var/cache/homelab-tools, owner: root, group: root, mode: '0755' }
+    - { path: /opt/beszel-agent, owner: root, group: root, mode: '0755' }
+    - { path: /opt/beszel-agent/releases, owner: root, group: root, mode: '0755' }
+    - { path: "/opt/beszel-agent/releases/{{ beszel_agent_version }}", owner: root, group: root, mode: '0755' }
+    - { path: /etc/beszel-agent, owner: root, group: beszel, mode: '0750' }
+    - { path: /var/lib/beszel-agent, owner: beszel, group: beszel, mode: '0750' }
+
+- name: Download the official Beszel agent release
+  ansible.builtin.get_url:
+    url: "{{ beszel_agent_archive_url }}"
+    dest: "/var/cache/homelab-tools/beszel-agent-{{ beszel_agent_version }}.tar.gz"
+    checksum: "sha256:{{ beszel_agent_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  register: beszel_agent_archive
+
+- name: Check the extracted Beszel agent artifact
+  ansible.builtin.stat:
+    path: "/opt/beszel-agent/releases/{{ beszel_agent_version }}/beszel-agent"
+  register: beszel_agent_extracted_artifact
+
+- name: Extract the Beszel agent release
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/beszel-agent-{{ beszel_agent_version }}.tar.gz"
+    dest: "/opt/beszel-agent/releases/{{ beszel_agent_version }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+  register: beszel_agent_extract
+  when: beszel_agent_archive.changed or not beszel_agent_extracted_artifact.stat.exists
+
+- name: Link the active Beszel agent binary
+  ansible.builtin.file:
+    src: "/opt/beszel-agent/releases/{{ beszel_agent_version }}/beszel-agent"
+    dest: /usr/local/bin/beszel-agent
+    state: link
+    force: true
+  register: beszel_agent_link
+
+- name: Install the Hub public key
+  ansible.builtin.copy:
+    content: "{{ beszel_agent_hub_public_key | trim }}\n"
+    dest: /etc/beszel-agent/hub-key
+    owner: root
+    group: beszel
+    mode: '0640'
+  register: beszel_agent_key_file
+  no_log: true
+  when: beszel_agent_hub_public_key | length > 0
+
+- name: Install the agent token
+  ansible.builtin.copy:
+    content: "{{ beszel_agent_token | trim }}\n"
+    dest: /etc/beszel-agent/token
+    owner: root
+    group: beszel
+    mode: '0640'
+  register: beszel_agent_token_file
+  no_log: true
+  when: beszel_agent_token | length > 0
+
+- name: Install the Beszel agent environment
+  ansible.builtin.template:
+    src: beszel-agent.env.j2
+    dest: /etc/beszel-agent/agent.env
+    owner: root
+    group: beszel
+    mode: '0640'
+  register: beszel_agent_environment
+
+- name: Install the Beszel agent service
+  ansible.builtin.template:
+    src: beszel-agent.service.j2
+    dest: /etc/systemd/system/beszel-agent.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: beszel_agent_unit
+
+- name: Apply the requested Beszel agent state
+  ansible.builtin.systemd_service:
+    name: beszel-agent.service
+    enabled: "{{ beszel_agent_start_service }}"
+    state: >-
+      {{
+        'restarted'
+        if beszel_agent_start_service and
+        (beszel_agent_extract.changed or beszel_agent_link.changed or
+         beszel_agent_key_file.changed | default(false) or
+         beszel_agent_token_file.changed | default(false) or
+         beszel_agent_environment.changed or beszel_agent_unit.changed)
+        else ('started' if beszel_agent_start_service else 'stopped')
+      }}
+    daemon_reload: true
+
+- name: Verify the installed Beszel agent artifact
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/beszel-agent
+      - --version
+  changed_when: false
+  register: beszel_agent_version_output
+  failed_when: beszel_agent_version not in beszel_agent_version_output.stdout
+
+- name: Verify the Beszel agent is running
+  ansible.builtin.command: systemctl is-active beszel-agent.service
+  changed_when: false
+  register: beszel_agent_service_status
+  failed_when: beszel_agent_service_status.stdout | trim != 'active'
+  when: beszel_agent_start_service
+
+- name: Verify the running agent received the SMART device configuration
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    pid="$(systemctl show beszel-agent.service --property MainPID --value)" &&
+    test "$pid" -gt 0 &&
+    tr '\0' '\n' < "/proc/$pid/environ" |
+    grep -Fx -- 'SMART_DEVICES={{ beszel_agent_smart_devices }}'
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when:
+    - beszel_agent_start_service
+    - beszel_agent_smart_devices | length > 0
+
+- name: Verify the outbound-only agent has no TCP listener
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    ! ss -lntp | grep -F 'beszel-agent'
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: beszel_agent_start_service

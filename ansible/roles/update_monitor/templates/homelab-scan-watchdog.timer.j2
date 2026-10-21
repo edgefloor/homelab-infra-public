@@ -1,0 +1,11 @@
+[Unit]
+Description=Check CVE scan health every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=homelab-scan-watchdog.service
+
+[Install]
+WantedBy=timers.target

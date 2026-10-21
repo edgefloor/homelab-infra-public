@@ -1,0 +1,12 @@
+---
+- name: Configure the Tuwunel Matrix homeserver
+  hosts: tuwunel_servers
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, tuwunel, matrix_rtc]
+        cve_provisioning_installations:
+          - "deployment:tuwunel"
+          - "deployment:matrix-rtc-livekit"
+          - "deployment:matrix-rtc-jwt"

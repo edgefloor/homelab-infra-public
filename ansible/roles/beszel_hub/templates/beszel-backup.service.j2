@@ -1,0 +1,8 @@
+[Unit]
+Description=Create a consistent Beszel Hub backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/beszel-backup

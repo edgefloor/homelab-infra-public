@@ -1,0 +1,7 @@
+---
+- name: Provide the VPS with a private Dependency-Track upload path
+  hosts: incident
+  become: true
+  gather_facts: false
+  roles:
+    - dependency_track_tunnel

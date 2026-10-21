@@ -1,0 +1,123 @@
+---
+- name: Create Newt directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/newt, mode: '0700' }
+    - { path: /opt/newt, mode: '0755' }
+    - { path: /opt/newt/releases, mode: '0755' }
+    - { path: "/opt/newt/releases/{{ newt_version }}", mode: '0755' }
+
+- name: Download the official Newt release
+  ansible.builtin.get_url:
+    url: "{{ newt_binary_url }}"
+    dest: "/opt/newt/releases/{{ newt_version }}/newt"
+    checksum: "sha256:{{ newt_binary_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+  register: newt_binary
+
+- name: Install the continuously reconciled Pangolin routing Blueprint
+  ansible.builtin.template:
+    src: routes-blueprint.yml.j2
+    dest: /etc/newt/routes-blueprint.yml
+    owner: root
+    group: root
+    mode: '0640'
+  register: newt_blueprint
+
+- name: Link the active Newt binary
+  ansible.builtin.file:
+    src: "/opt/newt/releases/{{ newt_version }}/newt"
+    dest: /usr/local/bin/newt
+    state: link
+    force: true
+  register: newt_binary_link
+
+- name: Check for connector credentials
+  ansible.builtin.stat:
+    path: /etc/newt/newt.env
+  register: newt_credentials
+
+- name: Require connector credentials before starting Newt
+  ansible.builtin.assert:
+    that: newt_credentials.stat.exists
+    fail_msg: /etc/newt/newt.env must be installed before Newt can start
+  when: newt_start_service
+
+- name: Protect connector credentials
+  ansible.builtin.file:
+    path: /etc/newt/newt.env
+    owner: root
+    group: root
+    mode: '0600'
+  when: newt_credentials.stat.exists
+
+- name: Configure optional Pangolin client support
+  ansible.builtin.lineinfile:
+    path: /etc/newt/newt.env
+    regexp: '^DISABLE_CLIENTS='
+    line: "DISABLE_CLIENTS={{ 'false' if newt_accept_clients else 'true' }}"
+    owner: root
+    group: root
+    mode: '0600'
+  register: newt_environment_settings
+  when: newt_credentials.stat.exists
+
+- name: Install the Newt systemd service
+  ansible.builtin.template:
+    src: newt.service.j2
+    dest: /etc/systemd/system/newt.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: newt_unit
+
+- name: Apply the requested Newt service state
+  ansible.builtin.systemd_service:
+    name: newt.service
+    enabled: "{{ newt_start_service }}"
+    state: >-
+      {{
+        'restarted'
+        if newt_start_service and
+        (newt_binary.changed or newt_binary_link.changed or
+         newt_environment_settings.changed or newt_blueprint.changed or
+         newt_unit.changed)
+        else ('started' if newt_start_service else 'stopped')
+      }}
+    daemon_reload: true
+
+- name: Verify the installed Newt artifact
+  ansible.builtin.stat:
+    path: "/opt/newt/releases/{{ newt_version }}/newt"
+    checksum_algorithm: sha256
+  register: newt_artifact
+  failed_when: >-
+    not newt_artifact.stat.exists or
+    newt_artifact.stat.checksum != newt_binary_sha256
+
+- name: Verify Newt is running
+  ansible.builtin.command: systemctl is-active newt.service
+  changed_when: false
+  register: newt_service_status
+  failed_when: newt_service_status.stdout | trim != 'active'
+  when: newt_start_service
+
+- name: Check for Newt's generated client configuration
+  ansible.builtin.stat:
+    path: /root/.config/newt-client/config.json
+  register: newt_generated_configuration
+
+- name: Protect Newt's generated client configuration
+  ansible.builtin.file:
+    path: /root/.config/newt-client/config.json
+    owner: root
+    group: root
+    mode: '0600'
+  when: newt_generated_configuration.stat.exists

@@ -1,0 +1,16 @@
+---
+- name: Configure the Miniflux target
+  hosts: miniflux_servers
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, miniflux]
+        cve_provisioning_installations:
+          - "deployment:miniflux"
+          - "deployment:miniflux-mcp"
+          - "deployment:openai-tunnel"
+          - "deployment:postgresql"
+          - "binary:/usr/bin/miniflux"
+          - "binary:/usr/local/bin/miniflux-mcp"
+          - "binary:/usr/local/bin/tunnel-client"

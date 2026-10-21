@@ -1,0 +1,64 @@
+---
+# Current, non-secret Proxmox topology. This is a working inventory, not an
+# audit record. Refresh it before changing or migrating a guest.
+inventory:
+  schema_version: 2
+  status: current_platform_snapshot
+  observed_at: '2026-09-20T17:53:26+02:00'
+  source_platform: node1
+  collection:
+    method: read_only_proxmox_api
+    script: scripts/phase0_proxmox_inventory.py
+    in_guest_metadata_observed_at: '2026-08-30T15:47:00+02:00'
+    in_guest_metadata_scope: OS, services, listeners, storage paths, file modes, and selected non-secret routing metadata
+    application_data_contents_inspected: false
+    secret_bearing_file_contents_inspected: false
+    secrets_recorded: false
+    operational_refresh_at: '2026-10-20'
+    operational_refresh_scope: managed_guests_200_and_above_host_and_vps_only
+
+  workloads:
+    - { kind: lxc, id: 112, name: next-plaid, status: running, cores: 4, memory_mib: 8192, disk_gib: 32, address_mode: dhcp, observed_address: 10.42.0.7, bind_mounts: 1 }
+    - { kind: lxc, id: 115, name: eu-law-db, status: running, cores: 4, memory_mib: 8192, disk_gib: 16, address: 10.42.0.115/24, bind_mounts: 1 }
+    - { kind: lxc, id: 200, name: plan-runner, status: running, protection: true, cores: 2, memory_mib: 2048, disk_gib: 20, address_mode: static, observed_address: 10.42.0.200/24 }
+    - { kind: lxc, id: 201, name: hermes-agent, status: running, protection: true, application: hermes-agent, application_version: 2026.9.7, cores: 4, memory_mib: 4096, disk_gib: 32, address_mode: static, observed_address: 10.42.0.201/24 }
+    - { kind: lxc, id: 202, name: caddy, status: running, protection: true, cores: 1, memory_mib: 1024, disk_gib: 8, address_mode: static, observed_address: 10.42.0.202/24 }
+    - { kind: lxc, id: 203, name: jellyfin, status: running, protection: true, application: jellyfin, application_version: 12.0.0, accelerator: nvidia_quadro_p2200_nvenc_nvdec, bind_mounts: 1, cores: 4, memory_mib: 8192, disk_gib: 32, address_mode: static, observed_address: 10.42.0.203/24 }
+    - { kind: lxc, id: 204, name: media-automation, status: running, protection: true, applications: [seerr, radarr, sonarr, prowlarr, shelfmark], bind_mounts: 1, cores: 4, memory_mib: 8192, disk_gib: 32, address_mode: static, observed_address: 10.42.0.204/24 }
+    - { kind: lxc, id: 205, name: downloads, status: running, protection: true, applications: [transmission, filebrowser], bind_mounts: 1, cores: 2, memory_mib: 2048, disk_gib: 16, address_mode: static, observed_address: 10.42.0.205/24 }
+    - { kind: lxc, id: 206, name: miniflux, status: running, protection: true, applications: [miniflux, miniflux-mcp, openai-tunnel-client, postgresql], cores: 2, memory_mib: 2048, disk_gib: 16, address_mode: static, observed_address: 10.42.0.206/24 }
+    - { kind: lxc, id: 207, name: pocket-id, status: running, protection: true, application: pocket-id, application_version: 2.14.0, cores: 2, memory_mib: 2048, disk_gib: 8, address_mode: static, observed_address: 10.42.0.207/24 }
+    - { kind: lxc, id: 210, name: pangolin-connector, status: running, protection: true, application: newt, application_version: 1.16.0, cores: 1, memory_mib: 512, disk_gib: 8, address_mode: static, observed_address: 10.42.0.210/24 }
+    - { kind: lxc, id: 211, name: network-ops, status: running, protection: true, applications: [coredns, cloudflare-ddns], cores: 1, memory_mib: 512, disk_gib: 8, address_mode: static, observed_address: 10.42.0.211/24 }
+    - { kind: lxc, id: 212, name: helix, status: running, protection: true, application: helix-cve, application_status: retired_disabled, cores: 2, memory_mib: 4096, disk_gib: 16, address_mode: static, observed_address: 10.42.0.212/24 }
+    - { kind: lxc, id: 213, name: nerocd, status: running, protection: true, application: nerocd, application_version: 0.3.23, cores: 2, memory_mib: 2048, disk_gib: 12, address_mode: static, observed_address: 10.42.0.213/24 }
+    - { kind: lxc, id: 214, name: incident, status: running, protection: true, application: dependency-track, application_version: 5.2.0, cores: 4, memory_mib: 8192, disk_gib: 8, data_volume: { storage: data, type: zfs, size_gib: 64, mount: /var/lib/homelab-incidents, backup: true }, address_mode: static, observed_address: 10.42.0.214/24 }
+    - { kind: lxc, id: 215, name: firecrawl, status: running, protection: true, applications: [firecrawl, searxng], application_versions: { firecrawl: 2.11.373, searxng: 2026.9.20-2e624bed4 }, cores: 4, memory_mib: 12288, disk_gib: 64, address_mode: static, observed_address: 10.42.0.215/24 }
+
+    - { kind: lxc, id: 216, name: n8n, status: running, protection: true, application: n8n, application_version: 2.43.8, cores: 2, memory_mib: 4096, disk_gib: 40, address_mode: static, observed_address: 10.42.0.216/24 }
+    - { kind: lxc, id: 217, name: news-embeddings, status: running, protection: true, application: news-embeddings, accelerator: shared_nvidia_quadro_p2200, cores: 2, memory_mib: 4096, disk_gib: 32, address_mode: static, observed_address: 10.42.0.217/24, application_status: cuda_inference_verified, observed_at: '2026-10-13' }
+
+  current_notes:
+    - n8n 2.43.8 runs natively on protected LXC 216, with LAN access through Caddy and remote access through Pangolin for the Infrastructure role.
+    - The private news embedding helper occupies protected LXC 217 and shares the existing P2200. CUDA inference, idle GPU release, and backup membership were verified on 2026-10-13.
+    - LXC 202 is the active Caddy HTTPS edge for direct-home and internal routes.
+    - Hermes Agent 2026.9.7 is active on protected LXC 201.
+    - Seerr, Radarr, Sonarr, Prowlarr, and Shelfmark are active on LXC 204.
+    - Jellyfin 12.0.0, Chapter Creator 0.6.1.0, and Community SSO for Jellyfin 5.0.0.82 are active on protected LXC 203 with Quadro P2200 hardware transcoding; incompatible EDL Creator remains archived from the migration.
+    - Radarr 6.3.0.10514, Sonarr 4.0.19.2979, Prowlarr 2.5.2.5491, Shelfmark 1.3.15, and the pinned Seerr OIDC build are active on protected LXC 204.
+    - Transmission 4.1.3 and File Browser 2.63.23 are active on protected LXC 205.
+    - Miniflux 2.3.3, its MCP server, PostgreSQL 17.11, and the OpenAI tunnel client are active on protected LXC 206.
+    - Pocket ID 2.14.0 is active on protected LXC 207 through Caddy and trusts only Caddy for forwarded client addresses.
+    - Tuwunel 1.9.0 and MatrixRTC are active on the Pangolin VPS with the existing Matrix state and bridge credentials.
+    - Newt 1.16.0 is active on protected LXC 210 and the Pangolin Home site reconnects automatically after reboot.
+    - CoreDNS and the Cloudflare DDNS timer are active on protected LXC 211.
+    - Prowlarr full-syncs nCore and The Pirate Bay to Radarr and Sonarr.
+    - NeroCD 0.3.23 runs its digest-pinned official production Compose profile on protected LXC 213; CoreDNS and Caddy expose it to LAN clients only, with no Cloudflare or Pangolin route.
+    - Dependency-Track 5.2.0 and PostgreSQL run on protected LXC 214 with 4 cores and 8 GiB RAM. The retained 64 GiB ZFS volume owns `/var/lib/homelab-incidents`; legacy SQLite history is inactive.
+    - The custom Helix graph on LXC 212 is stopped and disabled. Its database and guest remain available for recovery.
+    - LXC 200 retains root-only infrastructure state and receives encrypted Tuwunel backups. Its Actions runner and retired incident backup timer are disabled.
+    - The VPS uses a restricted loopback SSH tunnel for native Dependency-Track uploads; the old incident reverse tunnel is disabled.
+    - Firecrawl 2.11.373 and SearXNG 2026.9.20-2e624bed4 run on fresh protected LXC 215; no state from retired external LXC 113 was imported.
+    - NextPlaid 112 and EU Law 115 remain active outside the OpenTofu-managed set.
+    - Weekly snapshot backups cover managed LXCs 200-207 and 210-217. Current Tuwunel exports are encrypted on LXC 200; the custom incident and Helix archive jobs are retired.
+    - OpenTofu owns protected LXCs 200-207 and 210-217.

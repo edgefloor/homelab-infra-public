@@ -1,0 +1,3 @@
+---
+# Emergency rollback only; normal provisioning must not restart the retired stack.
+homelab_legacy_cve_enabled: false

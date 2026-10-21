@@ -1,0 +1,17 @@
+---
+- name: Retire the unused CVE evidence capability
+  hosts: homelab_agent_targets:news_embeddings_servers
+  become: true
+  gather_facts: false
+  roles:
+    - retired_evidence_access
+
+- name: Remove CI access to production credentials and state
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stop the retired runner and protect the operator deployment state
+      ansible.builtin.include_role:
+        name: plan_runner
+        tasks_from: production-boundary.yml

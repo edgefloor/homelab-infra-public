@@ -1,0 +1,124 @@
+---
+- name: Require explicit opt-in to the retired custom CVE pipeline
+  ansible.builtin.import_role:
+    name: legacy_cve_guard
+  tags: [always]
+
+- name: Build the capability target map from inventory
+  ansible.builtin.command:
+    argv: [uv, run, --with, pyyaml, python, scripts/build_security_config.py, --output, /tmp/homelab-security-config]
+    chdir: "{{ playbook_dir }}/../.."
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: Include only managed investigation targets
+  ansible.builtin.set_fact:
+    homelab_agent_targets_config: "{{ lookup('file', '/tmp/homelab-security-config/agent-targets.json') | from_json }}"
+
+- name: Install the local restricted-control client
+  ansible.builtin.copy:
+    src: homelab_agentctl.py
+    dest: /usr/local/bin/homelab-agentctl
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0755'
+
+- name: Configure the homelab capability for the deployed Hermes account
+  ansible.builtin.include_tasks: investigator.yml
+
+- name: Configure investigation storage lifecycle
+  ansible.builtin.include_tasks: storage.yml
+
+- name: Stop and disable retired controller units
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - disable
+      - --now
+      - homelab-agent.service
+      - homelab-investigator.socket
+      - homelab-memory.socket
+      - homelab-memory-sync.timer
+      - homelab-memory-sync.service
+  changed_when: false
+  failed_when: false
+
+- name: Create the retired relay archive
+  ansible.builtin.file:
+    path: /var/backups/hermes-agent/retired-relay-state
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Inspect retired controller state
+  ansible.builtin.stat:
+    path: "/var/lib/homelab-agent/{{ item }}"
+  loop:
+    - cve-backlog.sqlite3
+    - matrix-since
+    - results
+    - investigations
+    - .codex
+    - .ssh/id_ed25519
+    - .ssh/id_ed25519.pub
+  register: homelab_retired_controller_state
+
+- name: Archive retired controller state
+  ansible.builtin.command:
+    argv:
+      - cp
+      - -a
+      - "{{ item.stat.path }}"
+      - "/var/backups/hermes-agent/retired-relay-state/{{ item.item | basename }}"
+    creates: "/var/backups/hermes-agent/retired-relay-state/{{ item.item | basename }}"
+  loop: "{{ homelab_retired_controller_state.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists
+
+- name: Remove retired controller state from the active target account
+  ansible.builtin.file:
+    path: "{{ item.stat.path }}"
+    state: absent
+  loop: "{{ homelab_retired_controller_state.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists
+
+- name: Remove retired controller credentials and runtime
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/homelab-agent/matrix-access-token
+    - /etc/homelab-agent/matrix-room-agent
+    - /etc/homelab-agent/matrix-room-health
+    - /etc/homelab-agent/matrix-room-vulnerabilities
+    - /etc/homelab-agent/targets.json
+    - /etc/homelab-agent/repository-context
+    - /opt/homelab-agent
+    - /etc/systemd/system/homelab-agent.service
+    - /etc/systemd/system/homelab-investigator.socket
+    - /etc/systemd/system/homelab-investigator@.service
+    - /etc/systemd/system/homelab-memory.socket
+    - /etc/systemd/system/homelab-memory@.service
+    - /etc/systemd/system/homelab-memory-sync.service
+    - /etc/systemd/system/homelab-memory-sync.timer
+    - /run/homelab-investigator.sock
+  register: homelab_retired_controller_artifacts
+
+- name: Reload systemd after retiring the parallel controller
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: homelab_retired_controller_artifacts.changed
+
+- name: Clear unloaded failed instances from the retired controller
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - reset-failed
+      - homelab-investigator@*.service
+      - homelab-memory@*.service
+  changed_when: false

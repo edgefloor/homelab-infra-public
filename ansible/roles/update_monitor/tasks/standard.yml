@@ -1,0 +1,75 @@
+---
+# Retain the standard Trivy binary and authenticated client configuration.
+- name: Reject scanner deployment for containers below 200
+  ansible.builtin.assert:
+    that: item.name != inventory_hostname
+    fail_msg: Containers below 200 must not receive vulnerability monitoring.
+  loop: "{{ (lookup('file', role_path + '/../../../inventory/workloads.yml') | from_yaml).inventory.workloads | selectattr('id', 'lt', 200) | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Require an amd64 update-monitor target
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture in ['x86_64', 'amd64']
+    fail_msg: The pinned Trivy artifact is only valid for amd64 targets.
+
+- name: Install update-monitor runtime dependencies
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - file
+      - python3
+      - tar
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create update-monitor directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ update_monitor_credentials_dir }}", mode: '0700' }
+    - { path: "{{ update_monitor_state_dir }}", mode: '0700' }
+    - { path: "{{ update_monitor_cache_dir }}", mode: '0700' }
+    - { path: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}", mode: '0755' }
+
+- name: Configure central vulnerability matching without a local database
+  ansible.builtin.include_tasks: trivy_client.yml
+
+- name: Download the checksum-pinned Trivy release
+  ansible.builtin.get_url:
+    url: "{{ update_monitor_trivy_archive_url }}"
+    dest: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}.tar.gz"
+    checksum: "sha256:{{ update_monitor_trivy_archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract the pinned Trivy release
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}.tar.gz"
+    dest: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}"
+    remote_src: true
+    creates: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}/trivy"
+
+- name: Install the pinned Trivy binary
+  ansible.builtin.copy:
+    src: "/var/cache/homelab-tools/trivy-{{ update_monitor_trivy_version }}/trivy"
+    dest: /usr/local/bin/trivy
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Verify the installed Trivy version
+  ansible.builtin.command: /usr/local/bin/trivy --version
+  register: update_monitor_trivy_version_output
+  changed_when: false
+  failed_when: >-
+    ('Version: ' + update_monitor_trivy_version) not in
+    update_monitor_trivy_version_output.stdout

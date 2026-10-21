@@ -1,0 +1,75 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    ":dependencyDashboard"
+  ],
+  "labels": ["dependencies"],
+  "osvVulnerabilityAlerts": true,
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "rangeStrategy": "pin",
+  "enabledManagers": [
+    "custom.regex",
+    "github-actions"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^apps\\/[^/]+\\.yml$/"],
+      "matchStrings": [
+        "upstream:\\s+repository:\\s+https://github\\.com/(?<depName>[^\\s]+)\\s+release:\\s+[\"']?(?<currentValue>[^\\s\"']+)"
+      ],
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^ansible\\/roles\\/[^/]+\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "(?<depName>(?:[a-z0-9.-]+/)?[a-z0-9._/-]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github\\/workflows\\/renovate\\.yml$/"],
+      "matchStrings": [
+        "renovate-version:\\s*(?<currentValue>[^\\s]+)"
+      ],
+      "depNameTemplate": "renovate",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Ignore the historical CoreDNS v011 tag",
+      "matchPackageNames": ["coredns/coredns"],
+      "allowedVersions": "/^v1\\./"
+    },
+    {
+      "description": "Require an explicit decision for breaking upgrades",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Keep prereleases out of the production update queue",
+      "matchCurrentVersion": "!/^0$/",
+      "ignoreUnstable": true,
+      "respectLatest": true
+    },
+    {
+      "description": "Keep Beszel Hub and agent updates together",
+      "matchPackageNames": ["henrygd/beszel", "docker.io/henrygd/beszel"],
+      "groupName": "Beszel"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security", "dependencies"]
+  }
+}

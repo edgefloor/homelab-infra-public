@@ -1,0 +1,8 @@
+---
+- name: Configure the remote Pangolin platform
+  hosts: remote_platform
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  roles:
+    - pangolin

@@ -1,0 +1,25 @@
+---
+schema_version: 1
+id: dependency-track
+name: OWASP Dependency-Track
+upstream:
+  repository: https://github.com/DependencyTrack/dependency-track
+  release: '5.2.0'
+  commit: d67a6a3a28006e95dcc7611553469bf89c6c9e0a
+  distribution: official_binary
+runtime: native_systemd
+environments:
+  staging: {target: incident, status: deployed_and_validated}
+  production: {target: incident, status: active_lan_only}
+routing: {caddy: lan, pangolin: none}
+health:
+  local_url: https://vulns.homelab.example/api/version
+  expected_units: [dependency-track.service, dependency-track-frontend.service, postgresql@17-dtrack.service]
+state:
+  paths: [/var/lib/homelab-incidents/dependency-track, /root/.config/dependency-track]
+  backup_required_before_cutover: true
+distribution_exception:
+  reason: Upstream publishes the native JVM distribution and frontend as release artifacts; pinned SHA-256 digests make these reproducible deployment inputs without maintaining a fork or a container stack.
+network:
+  exposure: lan_only_https
+  authentication: native_dependency_track

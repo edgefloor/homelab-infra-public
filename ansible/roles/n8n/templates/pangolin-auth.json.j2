@@ -1,0 +1,7 @@
+{{ {
+  'version': n8n_version,
+  'origin': 'https://' ~ n8n_hostname,
+  'trustedSources': n8n_auth_proxy_trusted_sources,
+  'header': n8n_auth_proxy_route.caddy.auth_proxy_header | lower,
+  'allowedUserIds': n8n_auth_proxy_route.caddy.auth_proxy_user_mappings.values() | list | unique
+} | to_nice_json }}

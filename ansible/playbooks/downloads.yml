@@ -1,0 +1,12 @@
+---
+- name: Configure the downloads target
+  hosts: download_servers
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, downloads]
+        cve_provisioning_installations:
+          - "deployment:transmission"
+          - "deployment:filebrowser"
+          - "binary:/usr/local/bin/filebrowser"

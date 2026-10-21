@@ -1,0 +1,767 @@
+{
+  "upstream_commit": "bf8e523d409b74bceb990a37e9a2dc7ffe1507d7",
+  "upstream_url": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/pnpm-workspace.yaml",
+  "upstream_sha256": "86606ca458843d2888fd29bd90f9fa6e2f2319f276cb2f57478d4eb2abd188e4",
+  "translated_rules": 111,
+  "omitted": [
+    {
+      "selector": "@n8n/typeorm>@sentry/node",
+      "value": "catalog:sentry",
+      "reason": "Parent-scoped pnpm selectors are direct-parent rules; npm ancestry scope can be broader."
+    },
+    {
+      "selector": "mssql@12.7.0>tedious",
+      "value": "20.0.5",
+      "reason": "Parent-scoped pnpm selectors are direct-parent rules; npm ancestry scope can be broader."
+    },
+    {
+      "selector": "knip>zod",
+      "value": "catalog:zod-v4",
+      "reason": "Parent-scoped pnpm selectors are direct-parent rules; npm ancestry scope can be broader."
+    },
+    {
+      "selector": "@daytona/sdk@0.205.1>@aws-sdk/client-s3",
+      "value": "3.808.0",
+      "reason": "Parent-scoped pnpm selectors are direct-parent rules; npm ancestry scope can be broader."
+    },
+    {
+      "selector": "@daytona/sdk@0.205.1>@aws-sdk/lib-storage",
+      "value": "3.808.0",
+      "reason": "Parent-scoped pnpm selectors are direct-parent rules; npm ancestry scope can be broader."
+    },
+    {
+      "selector": "@daytona/sdk@0.205.1>@opentelemetry/sdk-trace-base",
+      "value": "2.7.1",
+      "reason": "Parent-scoped pnpm selectors are direct-parent rules; npm ancestry scope can be broader."
+    },
+    {
+      "selector": "node-gyp>undici",
+      "value": "catalog:undici-v7",
+      "reason": "Parent-scoped pnpm selectors are direct-parent rules; npm ancestry scope can be broader."
+    }
+  ],
+  "semantics": "Direct package selectors and catalog values translated to npm overrides. Version-specific rules precede global rules because npm selects the first matching rule. Parent-specific rules omitted to avoid scope broadening.",
+  "upstream_patch_files_not_applied": {
+    "bull@4.16.4": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/bull%404.16.4.patch",
+    "element-plus@2.4.3": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/element-plus%402.4.3.patch",
+    "pdfjs-dist@5.4.296": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/pdfjs-dist%405.4.296.patch",
+    "pkce-challenge@5.0.0": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/pkce-challenge%405.0.0.patch",
+    "@types/express-serve-static-core@5.0.6": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/%40types__express-serve-static-core%405.0.6.patch",
+    "@types/ws@8.18.1": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/%40types__ws%408.18.1.patch",
+    "vue-tsc@2.2.8": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/vue-tsc%402.2.8.patch",
+    "ics": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/ics.patch",
+    "minifaker": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/minifaker.patch",
+    "z-vue-scan": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/z-vue-scan.patch",
+    "@lezer/highlight": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/%40lezer__highlight.patch",
+    "v-code-diff": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/v-code-diff.patch",
+    "vuedraggable@4.1.0": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/vuedraggable%404.1.0.patch",
+    "assert@2.1.0": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/assert%402.1.0.patch",
+    "reka-ui@2.5.0": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/reka-ui%402.5.0.patch",
+    "lodash@4.18.1": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/lodash%404.18.1.patch",
+    "@langchain/openai@1.4.4": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/%40langchain__openai%401.4.4.patch",
+    "@langchain/google-common@2.1.24": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/%40langchain__google-common%402.1.24.patch",
+    "@confluentinc/kafka-javascript@1.9.1": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/%40confluentinc__kafka-javascript%401.9.1.patch",
+    "imapflow@1.7.1": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/imapflow%401.7.1.patch",
+    "@chat-adapter/teams@4.37.0": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/%40chat-adapter__teams%404.37.0.patch",
+    "xml2js@0.6.2": "https://raw.githubusercontent.com/n8n-io/n8n/bf8e523d409b74bceb990a37e9a2dc7ffe1507d7/patches/xml2js%400.6.2.patch"
+  },
+  "additional_candidate_changes": [
+    {
+      "selector": "handlebars",
+      "upstream_version": "4.7.9",
+      "candidate_version": "4.7.10",
+      "reason": "Security patch for GHSA-p8wg-vrv2-v86f and GHSA-8r5x-fm3f-whwj. All 48 renders of 24 packaged n8n templates matched the prior version, and 4.7.10 rejected the harmless AST sentinel.",
+      "advisories": [
+        "https://github.com/advisories/GHSA-p8wg-vrv2-v86f",
+        "https://github.com/advisories/GHSA-8r5x-fm3f-whwj"
+      ],
+      "compatibility_receipt_sha256": "314fa76a580c732a21d6e1db5f0e866f4d86f7a181bc2b856e42263b9d0656b5",
+      "carried_forward_from_release": "2.43.7"
+    },
+    {
+      "selector": "qs",
+      "upstream_override": "6.15.2",
+      "prior_resolved_version": "6.15.2",
+      "candidate_version": "6.16.0",
+      "reason": "Narrow same-major security update verified against actual published npm artifacts with harmless regression checks.",
+      "advisories": [
+        "https://github.com/advisories/GHSA-x5fp-wj9c-mxmx",
+        "https://github.com/advisories/GHSA-4mjr-xmp4-gh2g"
+      ],
+      "compatibility_receipt_sha256": "0e6ee4f2983bab627d1c62058c31830beaac758905b81acfec9a35c4a01ca934",
+      "carried_forward_from_release": "2.43.7"
+    },
+    {
+      "selector": "hono",
+      "upstream_override": "4.12.34",
+      "prior_resolved_version": "4.12.34",
+      "candidate_version": "4.13.7",
+      "reason": "Narrow same-major security update verified against actual published npm artifacts with harmless regression checks.",
+      "advisories": [
+        "https://github.com/advisories/GHSA-gqvv-2mrq-wpjv",
+        "https://github.com/advisories/GHSA-g6gw-c38x-mqfc",
+        "https://github.com/advisories/GHSA-crvj-82cr-hjcx",
+        "https://github.com/advisories/GHSA-hxh3-vqpv-xpqv"
+      ],
+      "compatibility_receipt_sha256": "0e6ee4f2983bab627d1c62058c31830beaac758905b81acfec9a35c4a01ca934",
+      "carried_forward_from_release": "2.43.7"
+    },
+    {
+      "selector": "ip-address@10",
+      "upstream_override": "10.3.1",
+      "prior_resolved_version": "10.3.1",
+      "candidate_version": "10.7.1",
+      "reason": "Narrow same-major security update verified against actual published npm artifacts with harmless regression checks.",
+      "advisories": [
+        "https://github.com/advisories/GHSA-rpw4-54j3-4h4q",
+        "https://github.com/advisories/GHSA-2vr4-cq9g-pvrc",
+        "https://github.com/advisories/GHSA-j6r3-76f7-8jcv",
+        "https://github.com/advisories/GHSA-h3mg-xc3c-68pw"
+      ],
+      "compatibility_receipt_sha256": "0e6ee4f2983bab627d1c62058c31830beaac758905b81acfec9a35c4a01ca934",
+      "carried_forward_from_release": "2.43.7"
+    },
+    {
+      "selector": "nodemailer",
+      "upstream_version": "8.0.10",
+      "candidate_version": "10.1.7",
+      "reason": "The maintained upstream security line fixes eight matched advisories. Native CJS and addressparser compatibility, n8n mail callers, MIME round-trips, and file/URL denial pass in a disposable no-network process. Node 24 meets the new Node >=20 requirement; fetched TLS content now validates certificates by default. No SMTP transaction was sent.",
+      "advisories": [
+        "https://github.com/advisories/GHSA-p6gq-j5cr-w38f",
+        "https://github.com/advisories/GHSA-8m3c-c648-2xjj",
+        "https://github.com/advisories/GHSA-wmmp-3585-3rmp",
+        "https://github.com/advisories/GHSA-2x7j-588g-ccc2",
+        "https://github.com/advisories/GHSA-cc9r-2j5m-2m83",
+        "https://github.com/advisories/GHSA-6vj9-mwq6-2f5v",
+        "https://github.com/advisories/GHSA-8vvx-rff5-p5rq",
+        "https://github.com/advisories/GHSA-v53p-9fqp-m79j"
+      ],
+      "compatibility_receipt_sha256": "9bd57e826b773f8ccde1652361ca89c1385a21443b6e140be98192a9dd407bd7"
+    },
+    {
+      "selector": "snowflake-sdk",
+      "upstream_version": "3.3.0",
+      "candidate_version": "3.4.0",
+      "reason": "Use the supported same-major Snowflake release that upgrades its own TOML dependency to ^5.0.0 (resolved 5.0.1), fixing two high advisories. Real n8n node loading, local TOML configuration and disconnected connection construction pass. Vendor 3.4.0 also disables deprecated OCSP by default; no active workflow or credential uses Snowflake.",
+      "release_notes": "https://docs.snowflake.com/en/release-notes/clients-drivers/nodejs-2026#version-3-4-0-september-30-2026",
+      "advisories": [
+        "https://github.com/advisories/GHSA-82x6-q7mm-w9cf",
+        "https://github.com/advisories/GHSA-v5mp-jgw5-2x6j"
+      ],
+      "compatibility_receipt_sha256": "9bd57e826b773f8ccde1652361ca89c1385a21443b6e140be98192a9dd407bd7"
+    }
+  ],
+  "lock_generation": {
+    "node": "24.21.0",
+    "npm": "11.19.0",
+    "baseline_release": "2.43.7",
+    "baseline_lock_sha256": "7226d8976821dfaf0dab42bdcfb3cdd812057e716b1c14c8988c8d600cd7d284",
+    "candidate_lock_sha256": "c8d5421f01da578e045310bb210178b0c7ba4f8d8bb88ba865942e54fa67bb15",
+    "method": "Generated by npm install --package-lock-only --ignore-scripts --omit=dev from the prior integrity lock, n8n 2.43.8, inherited reviewed overrides and the Nodemailer/Snowflake overrides. No dependencies were manually removed. Installed with npm ci --omit=dev as the unprivileged build account. The install preserved both manifest and lock.",
+    "resolver_delta": [
+      {
+        "path": "node_modules/@ai-sdk/alibaba",
+        "before": "2.0.69",
+        "after": "2.0.71"
+      },
+      {
+        "path": "node_modules/@ai-sdk/amazon-bedrock",
+        "before": "5.0.118",
+        "after": "5.0.119"
+      },
+      {
+        "path": "node_modules/@ai-sdk/anthropic",
+        "before": "4.0.82",
+        "after": "4.0.83"
+      },
+      {
+        "path": "node_modules/@ai-sdk/azure",
+        "before": "4.0.104",
+        "after": "4.0.105"
+      },
+      {
+        "path": "node_modules/@ai-sdk/cohere",
+        "before": "4.0.63",
+        "after": "4.0.64"
+      },
+      {
+        "path": "node_modules/@ai-sdk/deepseek",
+        "before": "3.0.67",
+        "after": "3.0.68"
+      },
+      {
+        "path": "node_modules/@ai-sdk/gateway",
+        "before": "4.0.116",
+        "after": "4.0.118"
+      },
+      {
+        "path": "node_modules/@ai-sdk/google",
+        "before": "4.0.99",
+        "after": "4.0.100"
+      },
+      {
+        "path": "node_modules/@ai-sdk/google-vertex",
+        "before": "5.0.115",
+        "after": "5.0.117"
+      },
+      {
+        "path": "node_modules/@ai-sdk/groq",
+        "before": "4.0.63",
+        "after": "4.0.65"
+      },
+      {
+        "path": "node_modules/@ai-sdk/minimax",
+        "before": "3.0.59",
+        "after": "3.0.60"
+      },
+      {
+        "path": "node_modules/@ai-sdk/mistral",
+        "before": "4.0.66",
+        "after": "4.0.67"
+      },
+      {
+        "path": "node_modules/@ai-sdk/moonshotai",
+        "before": "3.0.71",
+        "after": "3.0.72"
+      },
+      {
+        "path": "node_modules/@ai-sdk/openai",
+        "before": "4.0.96",
+        "after": "4.0.97"
+      },
+      {
+        "path": "node_modules/@ai-sdk/openai-compatible",
+        "before": "3.0.71",
+        "after": "3.0.73"
+      },
+      {
+        "path": "node_modules/@ai-sdk/otel",
+        "before": "1.0.143",
+        "after": "1.0.145"
+      },
+      {
+        "path": "node_modules/@ai-sdk/provider",
+        "before": "4.0.29",
+        "after": "4.0.30"
+      },
+      {
+        "path": "node_modules/@ai-sdk/provider-utils",
+        "before": "5.0.62",
+        "after": "5.0.63"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime",
+        "before": "3.1152.0",
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/core",
+        "before": "3.978.3",
+        "after": "3.978.4"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/credential-provider-env",
+        "before": "3.972.74",
+        "after": "3.972.75"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/credential-provider-http",
+        "before": "3.972.76",
+        "after": "3.972.77"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/credential-provider-ini",
+        "before": "3.973.19",
+        "after": "3.973.20"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/credential-provider-login",
+        "before": null,
+        "after": "3.972.82"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/credential-provider-node",
+        "before": "3.972.86",
+        "after": "3.972.87"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/credential-provider-process",
+        "before": "3.972.74",
+        "after": "3.972.75"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/credential-provider-sso",
+        "before": "3.973.18",
+        "after": "3.973.19"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/credential-provider-web-identity",
+        "before": "3.972.80",
+        "after": "3.972.81"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/nested-clients",
+        "before": "3.997.48",
+        "after": "3.997.49"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-bedrock-agent-runtime/node_modules/@aws-sdk/token-providers",
+        "before": "3.1150.0",
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra",
+        "before": "3.1152.0",
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/core",
+        "before": "3.978.3",
+        "after": "3.978.4"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/credential-provider-env",
+        "before": "3.972.74",
+        "after": "3.972.75"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/credential-provider-http",
+        "before": "3.972.76",
+        "after": "3.972.77"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/credential-provider-ini",
+        "before": "3.973.19",
+        "after": "3.973.20"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/credential-provider-login",
+        "before": null,
+        "after": "3.972.82"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/credential-provider-node",
+        "before": "3.972.86",
+        "after": "3.972.87"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/credential-provider-process",
+        "before": "3.972.74",
+        "after": "3.972.75"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/credential-provider-sso",
+        "before": "3.973.18",
+        "after": "3.973.19"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/credential-provider-web-identity",
+        "before": "3.972.80",
+        "after": "3.972.81"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/nested-clients",
+        "before": "3.997.48",
+        "after": "3.997.49"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-kendra/node_modules/@aws-sdk/token-providers",
+        "before": "3.1150.0",
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker",
+        "before": "3.1152.0",
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/core",
+        "before": "3.978.3",
+        "after": "3.978.4"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/credential-provider-env",
+        "before": "3.972.74",
+        "after": "3.972.75"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/credential-provider-http",
+        "before": "3.972.76",
+        "after": "3.972.77"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/credential-provider-ini",
+        "before": "3.973.19",
+        "after": "3.973.20"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/credential-provider-login",
+        "before": null,
+        "after": "3.972.82"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/credential-provider-node",
+        "before": "3.972.86",
+        "after": "3.972.87"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/credential-provider-process",
+        "before": "3.972.74",
+        "after": "3.972.75"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/credential-provider-sso",
+        "before": "3.973.18",
+        "after": "3.973.19"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/credential-provider-web-identity",
+        "before": "3.972.80",
+        "after": "3.972.81"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/nested-clients",
+        "before": "3.997.48",
+        "after": "3.997.49"
+      },
+      {
+        "path": "node_modules/@aws-sdk/client-sagemaker/node_modules/@aws-sdk/token-providers",
+        "before": "3.1150.0",
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@aws-sdk/lib-storage",
+        "before": "3.1152.0",
+        "after": null
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/checksums",
+        "before": null,
+        "after": "3.1001.4"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/client-s3",
+        "before": null,
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/core",
+        "before": null,
+        "after": "3.978.4"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/credential-provider-env",
+        "before": null,
+        "after": "3.972.75"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/credential-provider-http",
+        "before": null,
+        "after": "3.972.77"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/credential-provider-ini",
+        "before": null,
+        "after": "3.973.20"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/credential-provider-login",
+        "before": null,
+        "after": "3.972.82"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/credential-provider-node",
+        "before": null,
+        "after": "3.972.87"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/credential-provider-process",
+        "before": null,
+        "after": "3.972.75"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/credential-provider-sso",
+        "before": null,
+        "after": "3.973.19"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/credential-provider-web-identity",
+        "before": null,
+        "after": "3.972.81"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/lib-storage",
+        "before": null,
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/middleware-sdk-s3",
+        "before": null,
+        "after": "3.972.80"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/nested-clients",
+        "before": null,
+        "after": "3.997.49"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/token-providers",
+        "before": null,
+        "after": "3.1153.0"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/@aws-sdk/types",
+        "before": null,
+        "after": "3.974.6"
+      },
+      {
+        "path": "node_modules/@daytona/sdk/node_modules/buffer",
+        "before": null,
+        "after": "5.6.0"
+      },
+      {
+        "path": "node_modules/@n8n/agents",
+        "before": "0.28.6",
+        "after": "0.28.7"
+      },
+      {
+        "path": "node_modules/@n8n/ai-node-sdk",
+        "before": "0.33.5",
+        "after": "0.33.6"
+      },
+      {
+        "path": "node_modules/@n8n/ai-utilities",
+        "before": "0.36.5",
+        "after": "0.36.6"
+      },
+      {
+        "path": "node_modules/@n8n/ai-workflow-builder",
+        "before": "1.43.5",
+        "after": "1.43.6"
+      },
+      {
+        "path": "node_modules/@n8n/backend-common",
+        "before": "1.43.5",
+        "after": "1.43.6"
+      },
+      {
+        "path": "node_modules/@n8n/backend-network",
+        "before": "1.17.5",
+        "after": "1.17.6"
+      },
+      {
+        "path": "node_modules/@n8n/backend-services",
+        "before": "1.3.5",
+        "after": "1.3.6"
+      },
+      {
+        "path": "node_modules/@n8n/blob-storage",
+        "before": "1.11.5",
+        "after": "1.11.6"
+      },
+      {
+        "path": "node_modules/@n8n/client-oauth2",
+        "before": "1.25.5",
+        "after": "1.25.6"
+      },
+      {
+        "path": "node_modules/@n8n/config",
+        "before": "2.41.3",
+        "after": "2.41.4"
+      },
+      {
+        "path": "node_modules/@n8n/db",
+        "before": "1.43.5",
+        "after": "1.43.6"
+      },
+      {
+        "path": "node_modules/@n8n/engine",
+        "before": "0.23.3",
+        "after": "0.23.4"
+      },
+      {
+        "path": "node_modules/@n8n/instance-ai",
+        "before": "1.28.6",
+        "after": "1.28.7"
+      },
+      {
+        "path": "node_modules/@n8n/n8n-nodes-langchain",
+        "before": "2.43.5",
+        "after": "2.43.6"
+      },
+      {
+        "path": "node_modules/@n8n/node-engine-compatibility",
+        "before": "0.11.5",
+        "after": "0.11.6"
+      },
+      {
+        "path": "node_modules/@n8n/task-runner",
+        "before": "2.43.5",
+        "after": "2.43.6"
+      },
+      {
+        "path": "node_modules/@opentelemetry/api-logs",
+        "before": null,
+        "after": "0.223.0"
+      },
+      {
+        "path": "node_modules/@opentelemetry/exporter-trace-otlp-http",
+        "before": "0.220.0",
+        "after": "0.223.0"
+      },
+      {
+        "path": "node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/api-logs",
+        "before": "0.220.0",
+        "after": null
+      },
+      {
+        "path": "node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/otlp-exporter-base",
+        "before": "0.220.0",
+        "after": "0.223.0"
+      },
+      {
+        "path": "node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/otlp-transformer",
+        "before": "0.220.0",
+        "after": "0.223.0"
+      },
+      {
+        "path": "node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/resources",
+        "before": "2.9.0",
+        "after": null
+      },
+      {
+        "path": "node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/sdk-logs",
+        "before": "0.220.0",
+        "after": "0.223.0"
+      },
+      {
+        "path": "node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/sdk-metrics",
+        "before": "2.9.0",
+        "after": "2.12.0"
+      },
+      {
+        "path": "node_modules/@opentelemetry/exporter-trace-otlp-http/node_modules/@opentelemetry/sdk-trace",
+        "before": "2.9.0",
+        "after": "2.12.0"
+      },
+      {
+        "path": "node_modules/@zenfs/core/node_modules/buffer",
+        "before": "6.0.3",
+        "after": null
+      },
+      {
+        "path": "node_modules/@zenfs/streams/node_modules/buffer",
+        "before": "6.0.3",
+        "after": null
+      },
+      {
+        "path": "node_modules/ai",
+        "before": "7.0.143",
+        "after": "7.0.145"
+      },
+      {
+        "path": "node_modules/bl/node_modules/buffer",
+        "before": "6.0.3",
+        "after": null
+      },
+      {
+        "path": "node_modules/buffer",
+        "before": "5.6.0",
+        "after": "6.0.3"
+      },
+      {
+        "path": "node_modules/memium",
+        "before": "1.1.0",
+        "after": "1.1.1"
+      },
+      {
+        "path": "node_modules/n8n",
+        "before": "2.43.7",
+        "after": "2.43.8"
+      },
+      {
+        "path": "node_modules/n8n-core",
+        "before": "2.43.5",
+        "after": "2.43.6"
+      },
+      {
+        "path": "node_modules/n8n-nodes-base",
+        "before": "2.43.5",
+        "after": "2.43.6"
+      },
+      {
+        "path": "node_modules/nodemailer",
+        "before": "8.0.10",
+        "after": "10.1.7"
+      },
+      {
+        "path": "node_modules/readable-stream/node_modules/buffer",
+        "before": "6.0.3",
+        "after": null
+      },
+      {
+        "path": "node_modules/snowflake-sdk",
+        "before": "3.3.0",
+        "after": "3.4.0"
+      },
+      {
+        "path": "node_modules/strtok3",
+        "before": "10.6.1",
+        "after": "10.6.2"
+      },
+      {
+        "path": "node_modules/tar-stream/node_modules/buffer",
+        "before": null,
+        "after": "5.7.1"
+      },
+      {
+        "path": "node_modules/tedious",
+        "before": "20.3.7",
+        "after": "20.3.8"
+      },
+      {
+        "path": "node_modules/toml",
+        "before": "3.0.0",
+        "after": "5.0.1"
+      }
+    ]
+  },
+  "lock_sha256": "c8d5421f01da578e045310bb210178b0c7ba4f8d8bb88ba865942e54fa67bb15",
+  "validation": {
+    "date": "2026-10-20",
+    "release": "2.43.8",
+    "lock_sha256": "c8d5421f01da578e045310bb210178b0c7ba4f8d8bb88ba865942e54fa67bb15",
+    "node_version": "24.21.0",
+    "native_authentication_cases": 14,
+    "native_authentication_receipt_sha256": "853acd22e92c2631eb777f8330060371f15111ad17c72197055dd319b63cafb0",
+    "baseline_authentication_cases": 14,
+    "baseline_authentication_receipt_sha256": "bc8f0b00a8a7ca03ff396dc0b135dfb45bea9b544067b7e5d39e7060d5be5e0b",
+    "dependency_compatibility_cases": 11,
+    "dependency_compatibility_receipt_sha256": "9bd57e826b773f8ccde1652361ca89c1385a21443b6e140be98192a9dd407bd7",
+    "isolated_sqlite_restore": "passed",
+    "isolated_sqlite_restore_receipt_sha256": "a45a7fe20329b5cae6fdd334d879b1781379490a02766bfcc920e34512db78f7",
+    "native_git_feature_exclusion": "passed",
+    "native_complex_file_selector_deadline": "passed",
+    "state_preservation": "1 owner, 1 workflow and 2 decryptable credentials retained; schema 291 unchanged; no production workflow executed by validation."
+  },
+  "upstream_patch_reference_format": "Commit-pinned raw URLs with percent-encoded filenames.",
+  "upstream_constraints_unchanged_from": "2.43.7",
+  "verification": {
+    "dependency_verifier": "scripts/verify_n8n_dependency_compatibility.cjs",
+    "consumer_receipt_sha256": "9bd57e826b773f8ccde1652361ca89c1385a21443b6e140be98192a9dd407bd7",
+    "native_interface_comparison_sha256": "238ed9043f5f3d0d895a7f004117b837f4151ed61f6a4748a8e76e2a4e328f28",
+    "native_auth_interfaces": "AuthService, JwtService, ExternalHooks, constants, unpublish and credential-export commands are byte-identical to 2.43.7. Native authentication and isolated SQLite restore both passed for this exact 2.43.8 lock."
+  },
+  "prior_validation": {
+    "release": "2.43.7",
+    "lock_sha256": "7226d8976821dfaf0dab42bdcfb3cdd812057e716b1c14c8988c8d600cd7d284",
+    "scope": "Historical validation of the inherited overrides. The 48 template comparisons and parser probe suite were not repeated for 2.43.8.",
+    "date": "2026-10-17",
+    "node_version": "24.21.0",
+    "native_authentication_cases": 14,
+    "template_render_comparisons": 48,
+    "isolated_sqlite_restore": "passed",
+    "native_git_feature_exclusion": "passed",
+    "parser_security_and_compatibility_probes": "passed"
+  }
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily installed software inventory upload
+
+[Timer]
+OnCalendar={{ sbom_upload_schedule }}
+RandomizedDelaySec=1h
+Persistent=true
+Unit=homelab-sbom.service
+
+[Install]
+WantedBy=timers.target

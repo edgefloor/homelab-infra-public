@@ -1,0 +1,128 @@
+---
+- name: Read the canonical storage policy
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../../../inventory/backup-plan.yml"
+
+- name: Read thin-pool capacity
+  ansible.builtin.command:
+    argv: [lvs, --reportformat, json, --units, b, --nosuffix, -o, 'lv_size,lv_profile,seg_monitor', "{{ backup_plan.storage.thin_pool_device }}"]
+  register: homelab_thin_pool
+  changed_when: false
+
+- name: Read remaining volume group capacity
+  ansible.builtin.command:
+    argv: [vgs, --reportformat, json, --units, b, --nosuffix, -o, vg_free, "{{ backup_plan.storage.thin_pool_device.split('/')[0] }}"]
+  register: homelab_thin_vg
+  changed_when: false
+
+- name: Require room for one extension and the explicit reserve
+  ansible.builtin.assert:
+    that:
+      - backup_plan.storage.thin_pool_autoextend_threshold_percent | int >= 50
+      - backup_plan.storage.thin_pool_autoextend_threshold_percent | int < 100
+      - backup_plan.storage.thin_pool_autoextend_percent | int > 0
+      - >-
+        ((homelab_thin_vg.stdout | from_json).report[0].vg[0].vg_free | float)
+        - ((homelab_thin_pool.stdout | from_json).report[0].lv[0].lv_size | float)
+          * (backup_plan.storage.thin_pool_autoextend_percent | float) / 100
+        >= (backup_plan.storage.thin_pool_minimum_vg_reserve_gib | float) * 1073741824
+    fail_msg: The proposed extension would consume the reserved VG capacity; review storage before applying it.
+
+- name: Install the pool-specific LVM policy
+  ansible.builtin.copy:
+    dest: /etc/lvm/profile/homelab-thinpool.profile
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      activation {
+          thin_pool_autoextend_threshold = {{ backup_plan.storage.thin_pool_autoextend_threshold_percent }}
+          thin_pool_autoextend_percent = {{ backup_plan.storage.thin_pool_autoextend_percent }}
+      }
+
+- name: Validate the pool-specific policy
+  ansible.builtin.command:
+    argv: [lvmconfig, --metadataprofile, homelab-thinpool, --validate]
+  changed_when: false
+
+- name: Attach the profile to the existing thin pool
+  ansible.builtin.command:
+    argv: [lvchange, --metadataprofile, homelab-thinpool, "{{ backup_plan.storage.thin_pool_device }}"]
+  when: (homelab_thin_pool.stdout | from_json).report[0].lv[0].lv_profile | trim != 'homelab-thinpool'
+
+- name: Ensure LVM monitoring is enabled
+  ansible.builtin.systemd_service:
+    name: lvm2-monitor.service
+    enabled: true
+    state: started
+
+- name: Monitor the existing pool for automatic extension
+  ansible.builtin.command:
+    argv: [lvchange, --monitor, 'y', "{{ backup_plan.storage.thin_pool_device }}"]
+  when: (homelab_thin_pool.stdout | from_json).report[0].lv[0].seg_monitor | trim != 'monitored'
+
+- name: Read back the attached policy and monitoring
+  ansible.builtin.command:
+    argv: [lvs, --reportformat, json, -o, 'lv_profile,seg_monitor', "{{ backup_plan.storage.thin_pool_device }}"]
+  register: homelab_saved_thin_pool
+  changed_when: false
+
+- name: Verify the existing pool uses the monitored policy
+  ansible.builtin.assert:
+    that:
+      - (homelab_saved_thin_pool.stdout | from_json).report[0].lv[0].lv_profile | trim == 'homelab-thinpool'
+      - (homelab_saved_thin_pool.stdout | from_json).report[0].lv[0].seg_monitor | trim == 'monitored'
+
+- name: Read back the configured extension values
+  ansible.builtin.command:
+    argv: [lvmconfig, --metadataprofile, homelab-thinpool, --type, full, activation/thin_pool_autoextend_threshold, activation/thin_pool_autoextend_percent]
+  register: homelab_saved_thin_policy
+  changed_when: false
+
+- name: Verify the pool extension values
+  ansible.builtin.assert:
+    that:
+      - "('thin_pool_autoextend_threshold=' ~ backup_plan.storage.thin_pool_autoextend_threshold_percent) in homelab_saved_thin_policy.stdout"
+      - "('thin_pool_autoextend_percent=' ~ backup_plan.storage.thin_pool_autoextend_percent) in homelab_saved_thin_policy.stdout"
+
+- name: Install the read-only thin-pool health check
+  ansible.builtin.copy:
+    src: check_thinpool_health.py
+    dest: /usr/local/libexec/check-thinpool-health
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the native thin-pool health units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - homelab-thinpool-health.service
+    - homelab-thinpool-health.timer
+  register: homelab_thin_health_units
+
+- name: Verify the thin-pool health units
+  ansible.builtin.command:
+    argv: [systemd-analyze, verify, /etc/systemd/system/homelab-thinpool-health.service, /etc/systemd/system/homelab-thinpool-health.timer]
+  changed_when: false
+
+- name: Reload the thin-pool health units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: homelab_thin_health_units.changed
+
+- name: Enable hourly thin-pool health checks
+  ansible.builtin.systemd_service:
+    name: homelab-thinpool-health.timer
+    enabled: true
+    state: started
+
+- name: Verify current thin-pool health
+  ansible.builtin.systemd_service:
+    name: homelab-thinpool-health.service
+    state: started
+  changed_when: false

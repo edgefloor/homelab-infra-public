@@ -1,0 +1,212 @@
+http:
+  middlewares:
+    badger:
+      plugin:
+        badger:
+          disableForwardAuth: true
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+    security-headers:
+      headers:
+        stsSeconds: 31536000
+    matrix-webhook-path:
+      replacePath:
+        path: /crowdsec
+    trivy-path:
+      stripPrefix:
+        prefixes: [/_trivy]
+    trivy-concurrency:
+      inFlightReq:
+        amount: 16
+    trivy-body-limit:
+      buffering:
+        maxRequestBodyBytes: 33554432
+        memRequestBodyBytes: 1048576
+    crowdsec:
+      plugin:
+        crowdsec:
+          enabled: true
+          logLevel: INFO
+          crowdsecMode: stream
+          crowdsecLapiScheme: http
+          crowdsecLapiHost: crowdsec:8080
+          crowdsecLapiKeyFile: /run/secrets/crowdsec_traefik_key
+          crowdsecAppsecEnabled: false
+          updateIntervalSeconds: 60
+          updateMaxFailure: -1
+          streamStartupBlock: false
+          clientTrustedIPs:
+{% for range in crowdsec_trusted_ranges %}
+            - {{ range }}
+{% endfor %}
+
+  routers:
+    wildcard-http-redirect:
+      rule: 'HostRegexp(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.{{ pangolin_base_domain | regex_escape }}$`)'
+      service: noop@internal
+      entryPoints: [web]
+      middlewares: [redirect-to-https]
+      priority: 1
+
+    wildcard-https-fallback:
+      rule: 'HostRegexp(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.{{ pangolin_base_domain | regex_escape }}$`)'
+      service: rickroll-fallback-service
+      entryPoints: [websecure]
+      priority: 1
+      tls: {}
+
+    main-app-router-redirect:
+      rule: "Host(`{{ pangolin_dashboard_domain }}`)"
+      service: next-service
+      entryPoints: [web]
+      middlewares: [redirect-to-https, badger]
+
+    next-router:
+      rule: "Host(`{{ pangolin_dashboard_domain }}`) && !PathPrefix(`/api/v1`)"
+      service: next-service
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+    api-router:
+      rule: "Host(`{{ pangolin_dashboard_domain }}`) && PathPrefix(`/api/v1`)"
+      service: api-service
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+    ws-router:
+      rule: "Host(`{{ pangolin_dashboard_domain }}`)"
+      service: api-service
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+    matrix-router-redirect:
+      rule: "Host(`{{ matrix_server_domain }}`)"
+      service: matrix-service
+      entryPoints: [web]
+      middlewares: [redirect-to-https]
+
+    matrix-webhook-router:
+      rule: "Host(`{{ matrix_server_domain }}`) && Path(`/_crowdsec/webhook`)"
+      service: matrix-bridge-service
+      middlewares: [matrix-webhook-path]
+      entryPoints: [websecure]
+      priority: 200
+      tls:
+        certResolver: letsencrypt
+
+    trivy-router:
+      rule: "Host(`{{ matrix_server_domain }}`) && PathPrefix(`/_trivy/`)"
+      service: trivy-service
+      middlewares: [trivy-path, trivy-concurrency, trivy-body-limit]
+      entryPoints: [websecure]
+      priority: 200
+      tls:
+        certResolver: letsencrypt
+
+    matrix-router:
+      rule: "Host(`{{ matrix_server_domain }}`)"
+      service: matrix-service
+      entryPoints: [websecure]
+      tls:
+        certResolver: letsencrypt
+
+    matrix-rtc-router-redirect:
+      rule: "Host(`{{ matrix_rtc_domain }}`)"
+      service: matrix-rtc-livekit-service
+      entryPoints: [web]
+      middlewares: [redirect-to-https]
+
+    matrix-rtc-jwt-router:
+      rule: "Host(`{{ matrix_rtc_domain }}`) && (PathPrefix(`/sfu/get`) || PathPrefix(`/healthz`) || PathPrefix(`/get_token`))"
+      service: matrix-rtc-jwt-service
+      entryPoints: [websecure]
+      priority: 200
+      tls:
+        certResolver: letsencrypt
+
+    matrix-rtc-livekit-router:
+      rule: "Host(`{{ matrix_rtc_domain }}`)"
+      service: matrix-rtc-livekit-service
+      entryPoints: [websecure]
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    rickroll-fallback-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_fallback_address }}:3000
+    trivy-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:4954
+    next-service:
+      loadBalancer:
+        servers:
+          - url: http://pangolin:3002
+    api-service:
+      loadBalancer:
+        servers:
+          - url: http://pangolin:3000
+    matrix-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:{{ matrix_tuwunel_port }}
+    matrix-bridge-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:{{ matrix_bridge_port }}
+    matrix-rtc-jwt-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:{{ matrix_rtc_jwt_port }}
+    matrix-rtc-livekit-service:
+      loadBalancer:
+        servers:
+          - url: http://{{ pangolin_docker_host_gateway }}:{{ matrix_rtc_livekit_port }}
+
+tls:
+  stores:
+    default:
+      defaultGeneratedCert:
+        resolver: letsencrypt-wildcard
+        domain:
+          main: '{{ pangolin_base_domain }}'
+          sans:
+            - '*.{{ pangolin_base_domain }}'
+  options:
+    default:
+      minVersion: VersionTLS12
+      sniStrict: true
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+
+tcp:
+  serversTransports:
+    pp-transport-v1:
+      proxyProtocol:
+        version: 1
+    pp-transport-v2:
+      proxyProtocol:
+        version: 2
+  routers:
+    matrix-turn-tls-router:
+      rule: "HostSNI(`{{ matrix_rtc_domain }}`)"
+      entryPoints: [turntls]
+      service: matrix-turn-tls-service
+      tls:
+        certResolver: letsencrypt
+  services:
+    matrix-turn-tls-service:
+      loadBalancer:
+        servers:
+          - address: {{ pangolin_docker_host_gateway }}:{{ matrix_rtc_turn_tls_backend_port }}

@@ -1,0 +1,14 @@
+[Unit]
+Description=Pull and verify encrypted incident and Helix backups
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n /run/homelab-incident-backup.lock /usr/local/sbin/homelab-incident-backup-receive
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true
+TimeoutStartSec=2h

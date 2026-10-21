@@ -1,0 +1,61 @@
+---
+- name: Require explicit opt-in to the retired custom CVE pipeline
+  ansible.builtin.import_role:
+    name: legacy_cve_guard
+  tags: [always]
+
+- name: Install anonymous image inspection without a Docker import
+  ansible.builtin.apt:
+    name: skopeo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Build and install the standalone Go function-table reader
+  block:
+    - name: Create a temporary controller build directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: homelab-symbol-reader-
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: symbol_build
+    - name: Compile the standard-library-only Linux reader on the controller
+      ansible.builtin.command:
+        argv: [go, build, -trimpath, '-ldflags=-s -w', -o, '{{ symbol_build.path }}/homelab-go-symbol-proof', '{{ role_path }}/files/go-symbol-proof/main.go']
+      environment:
+        GOOS: linux
+        GOARCH: amd64
+        CGO_ENABLED: '0'
+        GOTOOLCHAIN: local
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+    - name: Install the read-only function-table reader
+      ansible.builtin.copy:
+        src: '{{ symbol_build.path }}/homelab-go-symbol-proof'
+        dest: /usr/local/libexec/homelab-go-symbol-proof
+        owner: root
+        group: root
+        mode: '0755'
+        backup: true
+  always:
+    - name: Remove this build's temporary controller directory
+      ansible.builtin.file:
+        path: '{{ symbol_build.path }}'
+        state: absent
+      when: symbol_build.path is defined
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+- name: Install bounded replacement-image extraction
+  ansible.builtin.copy:
+    src: artifact_replacement.py
+    dest: /usr/local/libexec/artifact_replacement.py
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true

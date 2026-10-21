@@ -1,0 +1,9 @@
+# Own only this table. Never flush another application's rules.
+add table inet dependency_track
+delete table inet dependency_track
+table inet dependency_track {
+    chain input {
+        type filter hook input priority -10; policy accept;
+        ip daddr {{ dependency_track_address }} tcp dport {{ dependency_track_frontend_port }} ip saddr != {{ dependency_track_proxy_address }} drop
+    }
+}

@@ -1,0 +1,60 @@
+---
+- name: Require one explicitly selected pending canary job
+  hosts: incident_servers
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Require the job returned by explicit operator admission
+      ansible.builtin.assert:
+        that: canary_job_id is defined
+        fail_msg: Supply canary_job_id after explicitly requesting one investigation.
+    - name: Reject competing or running work before the canary
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import sqlite3, sys
+            with sqlite3.connect('file:/var/lib/homelab-incidents/incidents.db?mode=ro', uri=True) as db:
+                rows = db.execute("SELECT id,state FROM jobs WHERE state IN ('queued','deferred','running')").fetchall()
+                assert rows == [(sys.argv[1], 'queued')], 'Canary requires exactly the selected queued job and no competing work'
+            print('Selected canary is the only pending job')
+          - "{{ canary_job_id }}"
+      changed_when: false
+
+- name: Run one incident job with the deployed worker's isolation settings
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Keep the normal worker disabled
+      ansible.builtin.systemd_service:
+        name: zag-ops-worker.service
+        state: stopped
+        enabled: false
+    - name: Read the deployed worker unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/zag-ops-worker.service
+      register: worker_unit
+    - name: Create a runtime-only single-job unit
+      ansible.builtin.copy:
+        content: "{{ (worker_unit.content | b64decode).replace('Restart=always', 'Restart=no').split('[Install]')[0] }}"
+        dest: /run/systemd/system/zag-ops-canary.service
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Start the canary without restart or boot enablement
+      ansible.builtin.systemd_service:
+        name: zag-ops-canary.service
+        daemon_reload: true
+        state: started

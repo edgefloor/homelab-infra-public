@@ -1,0 +1,18 @@
+[Unit]
+Description=Shelfmark book downloader
+After=network-online.target prowlarr.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/shelfmark
+EnvironmentFile=/etc/shelfmark/.env
+ExecStart=/usr/bin/bash /opt/shelfmark/start.sh
+Restart=always
+RestartSec=10
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

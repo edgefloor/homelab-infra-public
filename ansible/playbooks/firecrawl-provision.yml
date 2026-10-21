@@ -1,0 +1,186 @@
+---
+- name: Provision the fresh managed Firecrawl guest
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    firecrawl_tofu_root: /tmp/firecrawl-tofu-provision
+  tasks:
+    - name: Provision with guaranteed temporary-file cleanup
+      block:
+        - name: Remove any stale isolated provisioning root
+          ansible.builtin.file:
+            path: "{{ firecrawl_tofu_root }}"
+            state: absent
+
+        - name: Create the isolated provisioning root
+          ansible.builtin.file:
+            path: "{{ firecrawl_tofu_root }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0700'
+
+        - name: Stage the reviewed Proxmox root
+          ansible.builtin.copy:
+            src: "../../tofu/proxmox/{{ item }}"
+            dest: "{{ firecrawl_tofu_root }}/{{ item }}"
+            owner: root
+            group: root
+            mode: '0600'
+          loop: >-
+            {{ (query('ansible.builtin.fileglob', playbook_dir + '/../../tofu/proxmox/*.tf')
+                | map('basename') | sort | list) + ['.terraform.lock.hcl'] }}
+
+        - name: Initialize the isolated provisioning root
+          ansible.builtin.command:
+            argv: [homelab-tofu, init, -reconfigure, -input=false]
+            chdir: "{{ firecrawl_tofu_root }}"
+          changed_when: false
+
+        - name: Plan the fresh Firecrawl guest
+          ansible.builtin.command:
+            argv: [homelab-tofu, plan, -input=false, -no-color, -detailed-exitcode, "-out={{ firecrawl_tofu_root }}/provision.tfplan"]
+            chdir: "{{ firecrawl_tofu_root }}"
+          register: firecrawl_tofu_plan
+          changed_when: firecrawl_tofu_plan.rc == 2
+          failed_when: firecrawl_tofu_plan.rc not in [0, 2]
+
+        - name: Read the saved Firecrawl plan as JSON
+          ansible.builtin.command:
+            argv: [homelab-tofu, show, -json, "{{ firecrawl_tofu_root }}/provision.tfplan"]
+            chdir: "{{ firecrawl_tofu_root }}"
+          register: firecrawl_tofu_plan_json
+          changed_when: false
+          no_log: true
+
+        - name: Select actual resource changes in the saved plan
+          ansible.builtin.set_fact:
+            firecrawl_plan_changes: >-
+              {{ ((firecrawl_tofu_plan_json.stdout | from_json).resource_changes | default([]))
+                 | rejectattr('change.actions', 'equalto', ['no-op']) | list }}
+          no_log: true
+
+        - name: Require an isolated Firecrawl create or a converged root
+          ansible.builtin.assert:
+            that:
+              - >-
+                (firecrawl_tofu_plan.rc == 0 and firecrawl_plan_changes | length == 0) or
+                (firecrawl_tofu_plan.rc == 2 and firecrawl_plan_changes | length == 1)
+              - >-
+                firecrawl_tofu_plan.rc == 0 or
+                firecrawl_plan_changes[0].address == 'proxmox_virtual_environment_container.managed["firecrawl"]'
+              - firecrawl_tofu_plan.rc == 0 or firecrawl_plan_changes[0].change.actions == ['create']
+              - firecrawl_tofu_plan.rc == 0 or firecrawl_plan_changes[0].change.after.vm_id | int == 215
+            fail_msg: "Refusing a Proxmox plan that changes anything except the fresh LXC 215."
+
+        - name: Apply the exact reviewed Firecrawl plan
+          ansible.builtin.command:
+            argv: [homelab-tofu, apply, -input=false, -no-color, -auto-approve, "{{ firecrawl_tofu_root }}/provision.tfplan"]
+            chdir: "{{ firecrawl_tofu_root }}"
+          when: firecrawl_tofu_plan.rc == 2
+
+        - name: Require the Proxmox root to be converged
+          ansible.builtin.command:
+            argv: [homelab-tofu, plan, -input=false, -no-color, -detailed-exitcode]
+            chdir: "{{ firecrawl_tofu_root }}"
+          register: firecrawl_tofu_final_plan
+          changed_when: false
+          failed_when: firecrawl_tofu_final_plan.rc != 0
+      always:
+        - name: Remove the private provisioning root and saved plan
+          ansible.builtin.file:
+            path: "{{ firecrawl_tofu_root }}"
+            state: absent
+
+- name: Bootstrap administration access in the fresh Firecrawl guest
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    firecrawl_guest_id: '215'
+    firecrawl_admin_user: homelab-admin
+    firecrawl_admin_public_key: >-
+      {{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'HOME') + '/.ssh/id_ed25519.pub') }}
+  tasks:
+    - name: Read the fresh guest configuration
+      ansible.builtin.command:
+        argv: [pct, config, "{{ firecrawl_guest_id }}"]
+      register: firecrawl_guest_configuration
+      changed_when: false
+
+    - name: Require the exact fresh managed guest
+      ansible.builtin.assert:
+        that:
+          - "'hostname: firecrawl' in firecrawl_guest_configuration.stdout"
+          - "'ip=10.42.0.215/24' in firecrawl_guest_configuration.stdout"
+          - "'unprivileged: 1' in firecrawl_guest_configuration.stdout"
+        fail_msg: Refusing to bootstrap a guest that does not match managed LXC 215.
+
+    - name: Refresh package metadata in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, apt-get, update]
+      changed_when: false
+
+    - name: Install administration prerequisites in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, apt-get, install, -y, python3, sudo, openssh-server]
+      register: firecrawl_bootstrap_packages
+      changed_when: "'0 upgraded, 0 newly installed' not in firecrawl_bootstrap_packages.stdout"
+
+    - name: Inspect the administration account
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, id, -u, "{{ firecrawl_admin_user }}"]
+      register: firecrawl_admin_account
+      changed_when: false
+      failed_when: false
+
+    - name: Create the administration account
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, useradd, --create-home, --shell, /bin/bash, "{{ firecrawl_admin_user }}"]
+      when: firecrawl_admin_account.rc != 0
+
+    - name: Create the administration SSH directory
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, install, -d, -m, '0700', -o, "{{ firecrawl_admin_user }}", -g, "{{ firecrawl_admin_user }}", "/home/{{ firecrawl_admin_user }}/.ssh"]
+      changed_when: false
+
+    - name: Install the administration public key
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, tee, "/home/{{ firecrawl_admin_user }}/.ssh/authorized_keys"]
+        stdin: "{{ firecrawl_admin_public_key }}\n"
+      changed_when: false
+      no_log: true
+
+    - name: Protect the administration public key
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, chown, "{{ firecrawl_admin_user }}:{{ firecrawl_admin_user }}", "/home/{{ firecrawl_admin_user }}/.ssh/authorized_keys"]
+      changed_when: false
+
+    - name: Set the administration public key mode
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, chmod, '0600', "/home/{{ firecrawl_admin_user }}/.ssh/authorized_keys"]
+      changed_when: false
+
+    - name: Install the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, tee, "/etc/sudoers.d/{{ firecrawl_admin_user }}"]
+        stdin: "{{ firecrawl_admin_user }} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+      changed_when: false
+
+    - name: Protect the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, chmod, '0440', "/etc/sudoers.d/{{ firecrawl_admin_user }}"]
+      changed_when: false
+
+    - name: Validate the administration sudo rule
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, visudo, -cf, "/etc/sudoers.d/{{ firecrawl_admin_user }}"]
+      changed_when: false
+
+    - name: Enable SSH in the fresh guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ firecrawl_guest_id }}", --, systemctl, enable, --now, ssh.service]
+      changed_when: false

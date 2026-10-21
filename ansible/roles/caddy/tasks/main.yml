@@ -1,0 +1,216 @@
+---
+- name: Require the canonical routing inventory
+  ansible.builtin.assert:
+    that:
+      - homelab_routing.schema_version == 1
+      - homelab_routing.routes | length > 0
+    fail_msg: inventory/routes.yml must define the version 1 routing inventory
+
+- name: Initialize managed Caddy routes
+  ansible.builtin.set_fact:
+    caddy_routes: []
+
+- name: Derive Caddy routes from the canonical inventory
+  ansible.builtin.set_fact:
+    caddy_routes: >-
+      {{ caddy_routes + [item.caddy | combine({'hostname': item.hostname})] }}
+  loop: "{{ homelab_routing.routes }}"
+  loop_control:
+    label: "{{ item.hostname }}"
+  when: item.caddy is defined
+
+- name: Install Caddy repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - debian-archive-keyring
+      - debian-keyring
+      - gpg
+    state: present
+
+- name: Download the official Caddy repository key
+  ansible.builtin.get_url:
+    url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+    dest: /usr/share/keyrings/caddy-stable.asc
+    checksum: "sha256:{{ caddy_repository_key_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the Caddy repository keyring
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --dearmor
+      - --output
+      - /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      - /usr/share/keyrings/caddy-stable.asc
+    creates: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+
+- name: Download the official Caddy repository definition
+  ansible.builtin.get_url:
+    url: https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt
+    dest: /etc/apt/sources.list.d/caddy-stable.list
+    owner: root
+    group: root
+    mode: '0644'
+  register: caddy_repository
+
+- name: Pin the declared Caddy version
+  ansible.builtin.copy:
+    content: |
+      Package: caddy
+      Pin: version {{ caddy_version }}
+      Pin-Priority: 1001
+    dest: /etc/apt/preferences.d/caddy
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the pinned official Caddy package
+  ansible.builtin.apt:
+    name: "caddy={{ caddy_version }}"
+    state: present
+    update_cache: "{{ caddy_repository.changed }}"
+    allow_downgrade: true
+
+- name: Check for the Cloudflare DNS module
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/caddy
+      - list-modules
+  register: caddy_modules
+  changed_when: false
+
+- name: Install the pinned Cloudflare DNS module
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/caddy
+      - add-package
+      - "{{ caddy_cloudflare_module }}"
+      - --keep-backup
+  register: caddy_cloudflare_module_install
+  when: "'dns.providers.cloudflare' not in caddy_modules.stdout_lines"
+  notify: Restart Caddy
+
+- name: Check for the root-only Cloudflare environment file
+  ansible.builtin.stat:
+    path: "{{ caddy_cloudflare_environment_file }}"
+  register: caddy_cloudflare_environment
+
+- name: Require the externally provisioned Cloudflare environment file
+  ansible.builtin.assert:
+    that:
+      - caddy_cloudflare_environment.stat.exists
+      - caddy_cloudflare_environment.stat.isreg
+      - caddy_cloudflare_environment.stat.pw_name == 'root'
+      - caddy_cloudflare_environment.stat.mode == '0600'
+    fail_msg: >-
+      Provision {{ caddy_cloudflare_environment_file }} as a root-owned mode
+      0600 regular file containing CF_API_TOKEN before applying this role.
+
+- name: Create the Caddy systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/caddy.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure Caddy to read its Cloudflare environment file
+  ansible.builtin.copy:
+    content: |
+      [Service]
+      EnvironmentFile={{ caddy_cloudflare_environment_file }}
+    dest: /etc/systemd/system/caddy.service.d/cloudflare.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Caddy
+
+- name: Create the Caddy access-log directory
+  ansible.builtin.file:
+    path: "{{ caddy_access_log_path | dirname }}"
+    state: directory
+    owner: caddy
+    group: caddy
+    mode: '0750'
+
+- name: Install the production Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: caddy
+    mode: '0640'
+    validate: >-
+      /usr/bin/caddy validate
+      --envfile {{ caddy_cloudflare_environment_file }}
+      --config %s
+      --adapter caddyfile
+  notify: Reload Caddy
+
+- name: Ensure Caddy owns the access log created during validation
+  ansible.builtin.file:
+    path: "{{ caddy_access_log_path }}"
+    state: touch
+    owner: caddy
+    group: caddy
+    mode: '0640'
+    access_time: preserve
+    modification_time: preserve
+  notify: Reload Caddy
+
+- name: Enable and start Caddy
+  ansible.builtin.systemd_service:
+    name: caddy.service
+    enabled: true
+    state: started
+
+- name: Apply pending Caddy configuration changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the installed Caddy version
+  ansible.builtin.command: /usr/bin/caddy version
+  register: caddy_version_output
+  changed_when: false
+  failed_when: not caddy_version_output.stdout.startswith('v' + caddy_version)
+
+- name: Check the local health endpoint
+  ansible.builtin.uri:
+    url: http://127.0.0.1/healthz
+    return_content: true
+  register: caddy_health
+  failed_when: caddy_health.status != 200 or caddy_health.content != 'ok'
+
+- name: Check each final-address HTTPS route through Caddy
+  ansible.builtin.command:
+    argv:
+      - curl
+      - --silent
+      - --show-error
+      - --max-time
+      - '10'
+      - --resolve
+      - "{{ item.hostname }}:443:127.0.0.1"
+      - --output
+      - '-'
+      - --write-out
+      - "\n%{http_code}"
+      - "https://{{ item.hostname }}{{ item.health_path }}"
+  loop: "{{ caddy_routes }}"
+  loop_control:
+    label: "{{ item.hostname }} -> {{ item.upstream }}"
+  register: caddy_route_health
+  changed_when: false
+  failed_when: >-
+    caddy_route_health.stdout_lines[-1] | int !=
+    (item.expected_status | default(200)) or
+    (item.expected_content is defined and
+    item.expected_content not in caddy_route_health.stdout)
+
+- name: Check the local Caddy admin API
+  ansible.builtin.uri:
+    url: http://127.0.0.1:2019/config/
+    return_content: false
+    status_code: 200

@@ -1,0 +1,13 @@
+---
+- name: Configure the Pangolin Newt connector
+  hosts: pangolin_connectors
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, newt]
+        cve_provisioning_installations:
+          - "deployment:newt"
+          - "binary:/usr/local/bin/newt"

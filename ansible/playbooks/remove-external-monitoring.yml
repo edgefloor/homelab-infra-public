@@ -1,0 +1,48 @@
+---
+- name: Remove monitoring from the external containers
+  hosts: proxmox
+  become: true
+  gather_facts: false
+  vars:
+    removed_monitoring_guests:
+      - {id: 112, name: next-plaid}
+      - {id: 115, name: eu-law-db}
+  tasks:
+    - name: Check each exact container identity
+      ansible.builtin.command:
+        argv: [pct, config, "{{ item.id | string }}"]
+      loop: "{{ removed_monitoring_guests }}"
+      changed_when: false
+      register: guest_configuration
+    - name: Validate the removal targets
+      ansible.builtin.assert:
+        that:
+          - item.item.id | int < 200
+          - "('hostname: ' + item.item.name) in item.stdout_lines"
+      loop: "{{ guest_configuration.results }}"
+      loop_control:
+        label: "{{ item.item.id }}"
+    - name: Stage the recoverable removal tool
+      ansible.builtin.copy:
+        src: ../roles/update_monitor/files/remove_monitoring.py
+        dest: /run/homelab-remove-monitoring.py
+        mode: '0600'
+    - name: Copy the removal tool to each confirmed guest
+      ansible.builtin.command:
+        argv: [pct, push, "{{ item.id | string }}", /run/homelab-remove-monitoring.py, /run/homelab-remove-monitoring.py, --perms, '0600']
+      loop: "{{ removed_monitoring_guests }}"
+    - name: Stop schedules and archive notification-producing software
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ item.id | string }}", --, python3, /run/homelab-remove-monitoring.py]
+      loop: "{{ removed_monitoring_guests }}"
+      register: monitoring_removal
+      changed_when: "'\"removed\": []' not in monitoring_removal.stdout"
+    - name: Remove the guest-side cleanup tool
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ item.id | string }}", --, rm, -f, /run/homelab-remove-monitoring.py]
+      loop: "{{ removed_monitoring_guests }}"
+      changed_when: false
+    - name: Remove the staged cleanup tool
+      ansible.builtin.file:
+        path: /run/homelab-remove-monitoring.py
+        state: absent

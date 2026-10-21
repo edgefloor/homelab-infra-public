@@ -1,0 +1,22 @@
+---
+- name: Keep client-private resources behind the public 404 fallback
+  hosts: remote_platform
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  tasks:
+    - name: Converge native Pangolin private routing
+      ansible.builtin.include_role:
+        name: pangolin
+        tasks_from: private-routing
+
+- name: Restore public wildcard fallback DNS for client-private resources
+  hosts: network_ops
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  tasks:
+    - name: Converge public fallback DNS
+      ansible.builtin.include_role:
+        name: cloudflare_ddns
+        tasks_from: private-routing

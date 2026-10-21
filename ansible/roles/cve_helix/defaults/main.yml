@@ -1,0 +1,10 @@
+---
+cve_helix_image: homelab/helix-cve:1ffadba6124ed-mem2
+cve_helix_data_directory: /var/lib/helix-cve
+cve_helix_memory: 3g
+cve_helix_http_port: 6969
+cve_helix_grpc_port: 6970
+cve_helix_http_address: 0.0.0.0
+cve_helix_grpc_address: 127.0.0.1
+cve_helix_allowed_subnet: 10.42.0.0/24
+cve_helix_image_archive: /var/cache/homelab-tools/helix-cve-image.tar

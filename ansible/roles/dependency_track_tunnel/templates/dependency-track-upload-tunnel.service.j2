@@ -1,0 +1,19 @@
+[Unit]
+Description=Private Dependency-Track API upload path for the VPS
+After=network-online.target dependency-track.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ dependency_track_tunnel_client_user }}
+Group={{ dependency_track_tunnel_client_user }}
+ExecStart=/usr/bin/ssh -N -T -i /var/lib/{{ dependency_track_tunnel_client_user }}/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/var/lib/{{ dependency_track_tunnel_client_user }}/known_hosts -R 127.0.0.1:{{ dependency_track_tunnel_edge_port }}:127.0.0.1:{{ dependency_track_tunnel_api_port }} {{ dependency_track_tunnel_edge_user }}@{{ dependency_track_tunnel_edge_address }}
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+UMask=0077
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

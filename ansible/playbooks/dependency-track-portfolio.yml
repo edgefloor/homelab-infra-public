@@ -1,0 +1,77 @@
+---
+- name: Prepare the native homelab project collection
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  vars:
+    dtrack_portfolio_api: http://127.0.0.1:8081/api
+  tasks:
+    - name: Create or identify the collection through the native project API
+      no_log: true
+      block:
+        - name: Read the local bootstrap administrator credential
+          ansible.builtin.slurp:
+            src: /root/.config/dependency-track/admin.json
+          register: dtrack_portfolio_admin
+        - name: Authenticate locally without logging credentials
+          ansible.builtin.uri:
+            url: "{{ dtrack_portfolio_api }}/v1/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body:
+              username: "{{ (dtrack_portfolio_admin.content | b64decode | from_json).username }}"
+              password: "{{ (dtrack_portfolio_admin.content | b64decode | from_json).password }}"
+            return_content: true
+            use_proxy: false
+          register: dtrack_portfolio_login
+        - name: Find the exact native homelab project
+          ansible.builtin.uri:
+            url: "{{ dtrack_portfolio_api }}/v1/project?name=homelab"
+            headers: {Authorization: "Bearer {{ dtrack_portfolio_login.content }}"}
+            use_proxy: false
+          register: dtrack_portfolio_projects
+        - name: Select the current portfolio version
+          ansible.builtin.set_fact:
+            dtrack_portfolio_matches: "{{ dtrack_portfolio_projects.json | selectattr('name', 'equalto', 'homelab') | selectattr('version', 'defined') | selectattr('version', 'equalto', 'current') | list }}"
+        - name: Require an unambiguous collection identity
+          ansible.builtin.assert:
+            that: dtrack_portfolio_matches | length <= 1
+        - name: Create the homelab collection
+          ansible.builtin.uri:
+            url: "{{ dtrack_portfolio_api }}/v1/project"
+            method: PUT
+            headers: {Authorization: "Bearer {{ dtrack_portfolio_login.content }}"}
+            body_format: json
+            body:
+              name: homelab
+              version: current
+              description: Managed homelab SBOM portfolio
+              classifier: PLATFORM
+              active: true
+              collectionLogic: AGGREGATE_DIRECT_CHILDREN
+            status_code: 201
+            use_proxy: false
+          register: dtrack_portfolio_created
+          when: dtrack_portfolio_matches | length == 0
+        - name: Retain the selected portfolio identity
+          ansible.builtin.set_fact:
+            dtrack_portfolio: "{{ dtrack_portfolio_created.json if dtrack_portfolio_matches | length == 0 else dtrack_portfolio_matches[0] }}"
+        - name: Require an active root collection
+          ansible.builtin.assert:
+            that:
+              - dtrack_portfolio.active
+              - dtrack_portfolio.collectionLogic == 'AGGREGATE_DIRECT_CHILDREN'
+              - not (dtrack_portfolio.parent.uuid | default(''))
+        - name: Persist the portfolio identifier for native BOM publishers
+          ansible.builtin.copy:
+            content: "{{ {'uuid': dtrack_portfolio.uuid, 'name': 'homelab', 'version': 'current'} | to_json }}\n"
+            dest: /root/.config/dependency-track/portfolio.json
+            owner: root
+            group: root
+            mode: '0600'
+        - name: Share the nonsecret portfolio UUID within this playbook run
+          ansible.builtin.set_fact:
+            dtrack_notification_portfolio_uuid: "{{ dtrack_portfolio.uuid }}"
+    - name: Report the native parent portfolio identifier
+      ansible.builtin.debug:
+        msg: "Native homelab/current portfolio: {{ dtrack_notification_portfolio_uuid }}"

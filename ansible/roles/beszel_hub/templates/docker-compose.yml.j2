@@ -1,0 +1,39 @@
+---
+name: beszel
+
+services:
+  hub:
+    image: {{ beszel_image }}
+    container_name: beszel
+    restart: unless-stopped
+    environment:
+      APP_URL: "{{ beszel_app_url }}"
+      CHECK_UPDATES: "false"
+      DISABLE_PASSWORD_AUTH: "{{ beszel_disable_password_auth | bool | ternary('true', 'false') }}"
+      OAUTH_DISABLE_POPUP: "true"
+      SHARE_ALL_SYSTEMS: "false"
+      TZ: "{{ beszel_timezone }}"
+      USER_CREATION: "{{ beszel_allow_oauth_user_creation | bool | ternary('true', 'false') }}"
+    expose:
+      - "8090"
+    volumes:
+      - ./data:/beszel_data
+    networks:
+      - pangolin_frontend
+    healthcheck:
+      test: ["CMD", "/beszel", "health", "--url", "http://127.0.0.1:8090"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+        reservations:
+          memory: 128m
+
+networks:
+  pangolin_frontend:
+    external: true
+    name: pangolin_frontend

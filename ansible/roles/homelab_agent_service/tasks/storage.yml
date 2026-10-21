@@ -1,0 +1,318 @@
+---
+- name: Require explicit opt-in to the retired custom CVE pipeline
+  ansible.builtin.import_role:
+    name: legacy_cve_guard
+  tags: [always]
+
+- name: Converge the investigation execution identity
+  ansible.builtin.user:
+    name: "{{ homelab_investigation_execution.investigator_user }}"
+    system: true
+    home: "/var/lib/{{ homelab_investigation_execution.investigator_user }}"
+    shell: /usr/sbin/nologin
+    groups: "{{ homelab_investigation_execution.shared_group }}"
+    append: true
+
+- name: Create separate investigation scratch and shared artifact storage
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ homelab_agent_hermes_user }}"
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '2770'
+  loop:
+    - "{{ homelab_agent_workspace_root }}"
+    - "{{ homelab_agent_artifact_cache }}"
+    - "{{ homelab_agent_repository_root }}"
+
+# Old metadata below the shared repository root is untrusted. Fresh checkouts
+# populate this directory; do not migrate the old metadata automatically.
+- name: Create protected repository metadata storage
+  ansible.builtin.file:
+    path: "{{ homelab_agent_repository_metadata_root }}"
+    state: directory
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '2750'
+
+- name: Find existing shared workspace locks
+  ansible.builtin.find:
+    paths: "{{ homelab_agent_workspace_root }}"
+    patterns: .lock
+    recurse: true
+    file_type: file
+    hidden: true
+  register: homelab_agent_workspace_locks
+
+- name: Find existing managed workspace directories
+  ansible.builtin.find:
+    paths: "{{ homelab_agent_workspace_root }}"
+    patterns: job_*
+    recurse: false
+    file_type: directory
+    hidden: true
+  register: homelab_agent_workspace_directories
+
+- name: Inspect existing workspace manifests
+  ansible.builtin.stat:
+    path: "{{ item.path }}/manifest.json"
+    follow: false
+  loop: "{{ homelab_agent_workspace_directories.files }}"
+  loop_control:
+    label: "{{ item.path }}/manifest.json"
+  register: homelab_agent_workspace_manifests
+
+- name: Migrate existing workspace directories to the execution contract
+  ansible.builtin.file:
+    path: "{{ item.0.path }}{{ item.1 }}"
+    state: directory
+    owner: "{{ homelab_agent_hermes_user }}"
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '2770'
+  loop: "{{ homelab_agent_workspace_directories.files | product(['', '/scratch', '/evidence']) | list }}"
+  loop_control:
+    label: "{{ item.0.path }}{{ item.1 }}"
+
+- name: Migrate existing workspace manifests to the execution contract
+  ansible.builtin.file:
+    path: "{{ item.stat.path }}"
+    state: file
+    owner: "{{ homelab_agent_hermes_user }}"
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0660'
+  loop: "{{ homelab_agent_workspace_manifests.results }}"
+  loop_control:
+    label: "{{ item.stat.path | default('missing manifest') }}"
+  when: item.stat.exists and item.stat.isreg
+
+- name: Migrate existing workspace locks to the execution contract
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "{{ homelab_agent_hermes_user }}"
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0660'
+  loop: "{{ homelab_agent_workspace_locks.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Install the bounded workspace client
+  ansible.builtin.copy:
+    src: workspace_storage.py
+    dest: /usr/local/bin/homelab-workspace
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Require the brokered repository credential
+  ansible.builtin.assert:
+    that: homelab_agent_repository_github_token | length >= 20
+    fail_msg: >-
+      Set HOMELAB_REPOSITORY_GITHUB_TOKEN to a token limited to branch push and
+      pull-request creation for the configured repository.
+  no_log: true
+
+- name: Install the repository broker and client
+  ansible.builtin.copy:
+    src: repository_broker.py
+    dest: "{{ item }}"
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /usr/local/libexec/homelab-repository-broker
+    - /usr/local/bin/homelab-repository
+
+- name: Configure the repository broker
+  ansible.builtin.copy:
+    dest: /etc/homelab-investigator/repositories.json
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0640'
+    content: |
+      {
+        "workspace_root": {{ homelab_agent_repository_root | to_json }},
+        "metadata_root": {{ homelab_agent_repository_metadata_root | to_json }},
+        "validation_user": {{ homelab_investigation_execution.investigator_user | to_json }},
+        "repositories": {
+          "homelab": {
+            "clone_url": {{ homelab_agent_repository_clone_url | to_json }},
+            "provider_repository": {{ homelab_agent_repository_slug | to_json }},
+            "base_branch": "main",
+            "validation": [
+              ["git", "diff", "--check"],
+              ["/usr/local/lib/hermes-agent/venv/bin/python", "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"]
+            ]
+          }
+        }
+      }
+
+- name: Store the scoped repository credential
+  ansible.builtin.copy:
+    content: "{{ homelab_agent_repository_github_token }}\n"
+    dest: /etc/homelab-investigator/github-token
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Install the repository broker service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/homelab-repository-broker.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Credential-owning CVE repository and pull-request broker
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      User=root
+      Group={{ homelab_agent_hermes_group }}
+      RuntimeDirectory=homelab-repository
+      RuntimeDirectoryMode=0770
+      ExecStart=/usr/local/libexec/homelab-repository-broker serve
+      LoadCredential=github-token:/etc/homelab-investigator/github-token
+      Restart=on-failure
+      UMask=0027
+      NoNewPrivileges=yes
+      PrivateTmp=yes
+      PrivateDevices=yes
+      ProtectProc=invisible
+      ProcSubset=pid
+      ProtectHome=yes
+      ProtectSystem=strict
+      ReadOnlyPaths=/etc/homelab-investigator/repositories.json
+      ReadWritePaths={{ homelab_agent_repository_root }} {{ homelab_agent_repository_metadata_root }}
+      RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+      MemoryMax=512M
+      TasksMax=64
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Start the repository broker
+  ansible.builtin.systemd_service:
+    name: homelab-repository-broker.service
+    enabled: true
+    state: restarted
+    daemon_reload: true
+
+- name: Set investigation storage budgets
+  ansible.builtin.copy:
+    dest: /etc/homelab-investigator/storage.json
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: '0640'
+    content: |
+      {"root":{{ homelab_agent_workspace_root | to_json }},"cache":{{ homelab_agent_artifact_cache | to_json }},"min_free":3221225472,"job_limit":1073741824,"total_limit":4294967296,"cache_limit":2147483648}
+
+- name: Verify the existing shared locks as Zig
+  ansible.builtin.command:
+    argv: [/usr/local/bin/homelab-workspace, verify-access]
+  become_user: "{{ homelab_investigation_execution.investigator_user }}"
+  environment:
+    HOME: "/var/lib/{{ homelab_investigation_execution.investigator_user }}"
+  changed_when: false
+
+- name: Create a workspace as Zig for the controller access check
+  ansible.builtin.command:
+    argv: [/usr/local/bin/homelab-workspace, create, execution-contract-probe]
+  become_user: "{{ homelab_investigation_execution.investigator_user }}"
+  environment:
+    HOME: "/var/lib/{{ homelab_investigation_execution.investigator_user }}"
+  register: homelab_agent_zig_workspace_probe
+
+- name: Finish the Zig-created workspace as the controller
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/homelab-workspace
+      - finish
+      - "{{ homelab_agent_zig_workspace_probe.stdout | basename }}"
+  become_user: "{{ homelab_investigation_execution.controller_user }}"
+  environment:
+    HOME: "/var/lib/{{ homelab_investigation_execution.controller_user }}"
+
+- name: Create a workspace as the controller for the Zig access check
+  ansible.builtin.command:
+    argv: [/usr/local/bin/homelab-workspace, create, execution-contract-probe]
+  become_user: "{{ homelab_investigation_execution.controller_user }}"
+  environment:
+    HOME: "/var/lib/{{ homelab_investigation_execution.controller_user }}"
+  register: homelab_agent_controller_workspace_probe
+
+- name: Finish the controller-created workspace as Zig
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/homelab-workspace
+      - finish
+      - "{{ homelab_agent_controller_workspace_probe.stdout | basename }}"
+  become_user: "{{ homelab_investigation_execution.investigator_user }}"
+  environment:
+    HOME: "/var/lib/{{ homelab_investigation_execution.investigator_user }}"
+
+- name: Verify Zig-created and controller-created job locks as the controller
+  ansible.builtin.command:
+    argv: [/usr/local/bin/homelab-workspace, verify-access]
+  become_user: "{{ homelab_investigation_execution.controller_user }}"
+  environment:
+    HOME: "/var/lib/{{ homelab_investigation_execution.controller_user }}"
+  changed_when: false
+
+- name: Remove the empty access-check workspaces
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ homelab_agent_zig_workspace_probe.stdout }}"
+    - "{{ homelab_agent_controller_workspace_probe.stdout }}"
+
+- name: Install workspace cleanup service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/homelab-workspace-cleanup.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Remove completed investigation scratch, preserving evidence
+      [Service]
+      Type=oneshot
+      User={{ homelab_agent_hermes_user }}
+      Group={{ homelab_agent_hermes_group }}
+      ExecStart=/usr/local/bin/homelab-workspace cleanup
+      NoNewPrivileges=yes
+      ProtectSystem=strict
+      ProtectHome=yes
+      PrivateTmp=yes
+      ReadWritePaths={{ homelab_agent_workspace_root }} {{ homelab_agent_artifact_cache }}
+      InaccessiblePaths=/var/lib/hermes-agent /var/lib/homelab-investigator/work
+      RestrictAddressFamilies=AF_UNIX
+      MemoryMax=128M
+      TasksMax=8
+      TimeoutStartSec=2min
+      UMask=0077
+
+- name: Install the hourly scratch cleanup timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/homelab-workspace-cleanup.timer
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Expire completed investigation scratch
+      [Timer]
+      OnBootSec=10min
+      OnUnitActiveSec=1h
+      RandomizedDelaySec=5min
+      [Install]
+      WantedBy=timers.target
+
+- name: Enable workspace retention
+  ansible.builtin.systemd_service:
+    name: homelab-workspace-cleanup.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Publish the workspace lifecycle in the operational capability
+  ansible.builtin.copy:
+    src: hermes-skills/homelab-oncall/
+    dest: "{{ homelab_agent_hermes_home }}/skills/homelab-oncall/"
+    owner: root
+    group: "{{ homelab_agent_hermes_group }}"
+    mode: preserve

@@ -1,0 +1,378 @@
+---
+- name: Require the supported native target and sufficient memory
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Debian'
+      - ansible_facts.distribution_major_version | int >= 13
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.memtotal_mb | int >= 7000
+    fail_msg: Dependency-Track needs the reviewed Debian amd64 guest with at least 8 GB assigned.
+
+- name: Verify the retained incident data mount is present
+  ansible.builtin.command:
+    argv: [mountpoint, -q, "{{ dependency_track_storage_mount }}"]
+  changed_when: false
+
+- name: Resolve the private notification destination through the canonical LAN proxy
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\S+\s+{{ dependency_track_notification_hostname | regex_escape }}(?:\s+#.*)?$'
+    line: '{{ dependency_track_notification_proxy }} {{ dependency_track_notification_hostname }} # Dependency-Track notification destination'
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Record whether nginx existed before this installation
+  ansible.builtin.stat:
+    path: /usr/sbin/nginx
+  register: dependency_track_existing_nginx
+
+- name: Install distribution prerequisites without starting package services
+  ansible.builtin.apt:
+    name: [acl, ca-certificates, python3, unzip, nginx-light, nftables, postgresql-common]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    policy_rc_d: 101
+
+- name: Keep a newly installed default nginx instance disabled
+  ansible.builtin.systemd_service:
+    name: nginx.service
+    state: stopped
+    enabled: false
+    masked: true
+  when: not dependency_track_existing_nginx.stat.exists
+
+- name: Avoid creating an unused default PostgreSQL cluster
+  ansible.builtin.lineinfile:
+    path: /etc/postgresql-common/createcluster.conf
+    regexp: '^#?create_main_cluster\s*='
+    line: 'create_main_cluster = false'
+    create: true
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install PostgreSQL 17 from signed distribution packages
+  ansible.builtin.apt:
+    name: postgresql-17
+    state: present
+    policy_rc_d: 101
+
+- name: Create the Dependency-Track service account
+  ansible.builtin.user:
+    name: dependency-track
+    home: "{{ dependency_track_data_root }}/application"
+    create_home: false
+    system: true
+    shell: /usr/sbin/nologin
+
+- name: Create isolated application directories without changing legacy ownership
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - { path: /opt/dependency-track }
+    - { path: "/opt/dependency-track/java-{{ dependency_track_java_version }}" }
+    - { path: "/opt/dependency-track/releases/{{ dependency_track_version }}" }
+    - { path: "/opt/dependency-track/releases/{{ dependency_track_version }}/config", group: dependency-track, mode: '0750' }
+    - { path: "/opt/dependency-track/frontend/{{ dependency_track_version }}" }
+    - { path: /var/cache/homelab-tools }
+    - { path: /etc/dependency-track, group: dependency-track, mode: '0750' }
+    - { path: /root/.config/dependency-track, mode: '0700' }
+    - { path: "{{ dependency_track_data_root }}" }
+    - { path: "{{ dependency_track_data_root }}/application", owner: dependency-track, group: dependency-track, mode: '0700' }
+    - { path: "{{ dependency_track_data_root }}/postgresql", owner: postgres, group: postgres, mode: '0700' }
+
+- name: Allow the two new service accounts to traverse the private legacy mount
+  ansible.builtin.command:
+    argv:
+      - setfacl
+      - --modify
+      - u:dependency-track:--x,u:postgres:--x
+      - "{{ dependency_track_storage_mount }}"
+  changed_when: false
+
+- name: Download checksum-pinned official native artifacts
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "/var/cache/homelab-tools/{{ item.name }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - { name: "dependency-track-{{ dependency_track_version }}.tar.gz", url: "{{ dependency_track_backend_url }}", sha256: "{{ dependency_track_backend_sha256 }}" }
+    - { name: "dependency-track-frontend-{{ dependency_track_version }}.zip", url: "{{ dependency_track_frontend_url }}", sha256: "{{ dependency_track_frontend_sha256 }}" }
+    - { name: "temurin-jre-{{ dependency_track_java_version }}.tar.gz", url: "{{ dependency_track_java_url }}", sha256: "{{ dependency_track_java_sha256 }}" }
+
+- name: Extract the native Java runtime
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/temurin-jre-{{ dependency_track_java_version }}.tar.gz"
+    dest: "/opt/dependency-track/java-{{ dependency_track_java_version }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    creates: "/opt/dependency-track/java-{{ dependency_track_java_version }}/bin/java"
+    owner: root
+    group: root
+  register: dependency_track_java_extract
+
+- name: Extract the API server distribution
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/dependency-track-{{ dependency_track_version }}.tar.gz"
+    dest: "/opt/dependency-track/releases/{{ dependency_track_version }}"
+    remote_src: true
+    creates: "/opt/dependency-track/releases/{{ dependency_track_version }}/dependency-track-apiserver.jar"
+    owner: root
+    group: root
+  register: dependency_track_backend_extract
+
+- name: Extract the static frontend
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/dependency-track-frontend-{{ dependency_track_version }}.zip"
+    dest: "/opt/dependency-track/frontend/{{ dependency_track_version }}"
+    remote_src: true
+    creates: "/opt/dependency-track/frontend/{{ dependency_track_version }}/dist/index.html"
+    owner: root
+    group: root
+
+- name: Generate a database password once on the target
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import os,secrets; p='/etc/dependency-track/database-password';
+        f=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);
+        os.write(f,(secrets.token_urlsafe(36)+chr(10)).encode()); os.close(f)
+    creates: /etc/dependency-track/database-password
+  no_log: true
+
+- name: Permit only the API service to read the database secret
+  ansible.builtin.file:
+    path: /etc/dependency-track/database-password
+    owner: root
+    group: dependency-track
+    mode: '0640'
+
+- name: Create the dedicated PostgreSQL cluster on retained storage
+  ansible.builtin.command:
+    argv:
+      - pg_createcluster
+      - --port
+      - "{{ dependency_track_postgresql_port }}"
+      - --datadir
+      - "{{ dependency_track_data_root }}/postgresql"
+      - '17'
+      - dtrack
+      - --
+      - --auth-local=peer
+      - --auth-host=scram-sha-256
+    creates: /etc/postgresql/17/dtrack/postgresql.conf
+
+- name: Configure the dedicated database for a shared 8 GB guest
+  ansible.builtin.copy:
+    content: |
+      listen_addresses = '127.0.0.1'
+      port = {{ dependency_track_postgresql_port }}
+      shared_buffers = '1GB'
+      effective_cache_size = '3GB'
+      work_mem = '4MB'
+      jit = off
+    dest: /etc/postgresql/17/dtrack/conf.d/dependency-track.conf
+    owner: postgres
+    group: postgres
+    mode: '0644'
+  register: dependency_track_postgresql_config
+
+- name: Start the dedicated database
+  ansible.builtin.systemd_service:
+    name: postgresql@17-dtrack.service
+    enabled: true
+    state: "{{ 'restarted' if dependency_track_postgresql_config.changed else 'started' }}"
+
+- name: Install native bootstrap tools
+  ansible.builtin.copy:
+    src: "{{ item }}.py"
+    dest: "/opt/dependency-track/{{ item }}.py"
+    owner: root
+    group: root
+    mode: '0700'
+  loop: [bootstrap, configure-database]
+
+- name: Configure the separate database and role
+  ansible.builtin.command:
+    argv: [python3, /opt/dependency-track/configure-database.py, "{{ dependency_track_postgresql_port }}"]
+  changed_when: false
+  no_log: true
+
+- name: Check whether the native analyzer configuration has completed
+  ansible.builtin.stat:
+    path: /root/.config/dependency-track/configured
+  register: dependency_track_configured
+
+- name: Install API configuration with first-boot scheduling held until bootstrap
+  ansible.builtin.template:
+    src: application.properties.j2
+    dest: "/opt/dependency-track/releases/{{ dependency_track_version }}/config/application.properties"
+    owner: root
+    group: dependency-track
+    mode: '0640'
+  register: dependency_track_api_config
+  vars:
+    dependency_track_scheduler_enabled: "{{ dependency_track_configured.stat.exists }}"
+
+- name: Configure the static frontend for the same HTTPS origin
+  ansible.builtin.copy:
+    content: "{{ {'API_BASE_URL': dependency_track_url, 'API_WITH_CREDENTIALS': '', 'FEATURE_FLAGS': {'GLOBAL_POLICY_VIOLATION_AUDIT': true, 'GLOBAL_VULNERABILITY_AUDIT': true}, 'OIDC_CLIENT_ID': '', 'OIDC_FLOW': 'code', 'OIDC_ISSUER': '', 'OIDC_LOGIN_BUTTON_TEXT': '', 'OIDC_SCOPE': 'openid email profile'} | to_nice_json }}\n"
+    dest: "/opt/dependency-track/frontend/{{ dependency_track_version }}/dist/static/config.json"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Select the pinned distributions
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    force: true
+  loop:
+    - { src: "/opt/dependency-track/releases/{{ dependency_track_version }}", dest: /opt/dependency-track/current }
+    - { src: "/opt/dependency-track/frontend/{{ dependency_track_version }}", dest: /opt/dependency-track/frontend-current }
+  register: dependency_track_release_links
+
+- name: Install private bootstrap settings
+  ansible.builtin.template:
+    src: bootstrap.json.j2
+    dest: /etc/dependency-track/bootstrap.json
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Read the existing central Trivy credential privately
+  ansible.builtin.slurp:
+    src: "{{ dependency_track_trivy_credentials_path }}"
+  delegate_to: "{{ dependency_track_trivy_credentials_host }}"
+  register: dependency_track_trivy_credentials
+  no_log: true
+
+- name: Stage the Trivy token for the managed-secret bootstrap
+  ansible.builtin.copy:
+    content: "{{ (dependency_track_trivy_credentials.content | b64decode | from_json).server.token }}\n"
+    dest: /etc/dependency-track/trivy-token
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Install dedicated service configuration
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - { src: nginx.conf.j2, dest: /etc/dependency-track/nginx.conf }
+    - { src: firewall.nft.j2, dest: /etc/dependency-track/firewall.nft }
+    - { src: dependency-track.service.j2, dest: /etc/systemd/system/dependency-track.service }
+    - { src: dependency-track-frontend.service.j2, dest: /etc/systemd/system/dependency-track-frontend.service }
+    - { src: dependency-track-firewall.service.j2, dest: /etc/systemd/system/dependency-track-firewall.service }
+  register: dependency_track_service_config
+
+- name: Reload native service definitions
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Validate nginx configuration before starting the frontend
+  ansible.builtin.command:
+    argv: [nginx, -t, -c, /etc/dependency-track/nginx.conf]
+  changed_when: false
+
+- name: Validate the isolated firewall table
+  ansible.builtin.command:
+    argv: [nft, --check, --file, /etc/dependency-track/firewall.nft]
+  changed_when: false
+
+- name: Apply the frontend source restriction
+  ansible.builtin.systemd_service:
+    name: dependency-track-firewall.service
+    enabled: true
+    state: "{{ 'restarted' if dependency_track_service_config.changed else 'started' }}"
+
+- name: Stop the frontend until private bootstrap succeeds
+  ansible.builtin.systemd_service:
+    name: dependency-track-frontend.service
+    state: stopped
+    enabled: false
+
+- name: Start the loopback API
+  ansible.builtin.systemd_service:
+    name: dependency-track.service
+    enabled: true
+    state: "{{ 'restarted' if dependency_track_api_config.changed or dependency_track_service_config.changed or dependency_track_release_links.changed or dependency_track_backend_extract.changed or dependency_track_java_extract.changed else 'started' }}"
+
+- name: Wait for database migrations and API readiness
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dependency_track_management_port }}/health/ready"
+    status_code: 200
+    return_content: true
+  register: dependency_track_health
+  retries: 90
+  delay: 5
+  until: dependency_track_health.status == 200 and dependency_track_health.json.status | default('') == 'UP'
+
+- name: Rotate the default administrator password and create the SBOM service account privately
+  ansible.builtin.command:
+    argv: [python3, /opt/dependency-track/bootstrap.py, /etc/dependency-track/bootstrap.json]
+  register: dependency_track_bootstrap
+  changed_when: dependency_track_bootstrap.stdout == 'changed'
+  # Management readiness may precede completion of the default-account init task.
+  retries: 6
+  delay: 5
+  until: dependency_track_bootstrap.rc == 0
+  no_log: true
+
+- name: Enable normal scheduled work after configuring the native analyzers
+  ansible.builtin.template:
+    src: application.properties.j2
+    dest: "/opt/dependency-track/releases/{{ dependency_track_version }}/config/application.properties"
+    owner: root
+    group: dependency-track
+    mode: '0640'
+  vars:
+    dependency_track_scheduler_enabled: true
+  register: dependency_track_scheduler_config
+
+- name: Start the scheduler after the first private bootstrap
+  ansible.builtin.systemd_service:
+    name: dependency-track.service
+    state: restarted
+  when: dependency_track_scheduler_config.changed
+
+- name: Verify API readiness after enabling scheduled work
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ dependency_track_management_port }}/health/ready"
+    status_code: 200
+    return_content: true
+  register: dependency_track_ready
+  retries: 90
+  delay: 5
+  until: dependency_track_ready.status == 200 and dependency_track_ready.json.status | default('') == 'UP'
+
+- name: Record the completed native configuration
+  ansible.builtin.copy:
+    content: "{{ dependency_track_version }}\n"
+    dest: /root/.config/dependency-track/configured
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Start the restricted frontend after successful credential verification
+  ansible.builtin.systemd_service:
+    name: dependency-track-frontend.service
+    enabled: true
+    state: started

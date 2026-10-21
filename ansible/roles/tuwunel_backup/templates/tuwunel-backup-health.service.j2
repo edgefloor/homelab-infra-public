@@ -1,0 +1,14 @@
+[Unit]
+Description=Check Tuwunel backup freshness and unresolved failures
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/check-tuwunel-backup --directory {{ tuwunel_backup_receiver_dir }} --max-age-seconds {{ tuwunel_backup_max_age_seconds }}
+TimeoutStartSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX

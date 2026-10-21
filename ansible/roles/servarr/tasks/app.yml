@@ -1,0 +1,74 @@
+---
+- name: Create {{ servarr_app.display_name }} directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "/opt/{{ servarr_app.name }}", mode: '0755' }
+    - { path: "/opt/{{ servarr_app.name }}/releases", mode: '0755' }
+    - { path: "/opt/{{ servarr_app.name }}/releases/{{ servarr_app.version }}", mode: '0755' }
+    - { path: "/var/lib/{{ servarr_app.name }}", mode: '0755' }
+    - { path: /var/cache/homelab-tools, mode: '0755' }
+
+- name: Download pinned official {{ servarr_app.display_name }} release
+  ansible.builtin.get_url:
+    url: "{{ servarr_app.archive_url }}"
+    dest: "/var/cache/homelab-tools/{{ servarr_app.name }}-{{ servarr_app.version }}.tar.gz"
+    checksum: "sha256:{{ servarr_app.archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Extract pinned {{ servarr_app.display_name }} release
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/{{ servarr_app.name }}-{{ servarr_app.version }}.tar.gz"
+    dest: "/opt/{{ servarr_app.name }}/releases/{{ servarr_app.version }}"
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+    creates: "/opt/{{ servarr_app.name }}/releases/{{ servarr_app.version }}/{{ servarr_app.display_name }}"
+
+- name: Link current {{ servarr_app.display_name }} release
+  ansible.builtin.file:
+    src: "/opt/{{ servarr_app.name }}/releases/{{ servarr_app.version }}"
+    dest: "/opt/{{ servarr_app.name }}/current"
+    state: link
+    owner: root
+    group: root
+    follow: false
+    force: true
+  register: servarr_release_link
+
+- name: Install {{ servarr_app.display_name }} systemd service
+  ansible.builtin.template:
+    src: servarr.service.j2
+    dest: "/etc/systemd/system/{{ servarr_app.name }}.service"
+    owner: root
+    group: root
+    mode: '0644'
+  vars:
+    app: "{{ servarr_app }}"
+  register: servarr_service_unit
+
+- name: Apply requested {{ servarr_app.display_name }} service state
+  ansible.builtin.systemd_service:
+    name: "{{ servarr_app.name }}.service"
+    enabled: "{{ servarr_app.start_service }}"
+    state: >-
+      {{ 'restarted' if servarr_app.start_service and
+         (servarr_release_link.changed or servarr_service_unit.changed)
+         else ('started' if servarr_app.start_service else 'stopped') }}
+    daemon_reload: true
+
+- name: Check {{ servarr_app.display_name }} health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ servarr_app.port }}/ping"
+    status_code: 200
+  register: servarr_health
+  retries: 30
+  delay: 2
+  until: servarr_health.status == 200
+  when: servarr_app.start_service

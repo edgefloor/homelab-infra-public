@@ -1,0 +1,66 @@
+---
+- name: Publish the private vulnerability dashboard in internal DNS
+  hosts: network_ops
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  tasks:
+    - name: Derive the internal host map
+      ansible.builtin.set_fact:
+        coredns_internal_hosts: "{{ (coredns_internal_hosts | default([])) + [{'address': homelab_routing.caddy_address, 'hostname': item.hostname}] }}"
+      loop: "{{ homelab_routing.routes }}"
+      when: item.internal_dns | default(false)
+      loop_control:
+        label: "{{ item.hostname }}"
+
+    - name: Publish the internal host map
+      ansible.builtin.template:
+        src: ../roles/coredns/templates/internal.hosts.j2
+        dest: /etc/coredns/internal.hosts
+        owner: root
+        group: coredns
+        mode: '0640'
+      register: vulnerability_internal_hosts
+
+    - name: Reload internal DNS hosts
+      ansible.builtin.systemd_service:
+        name: coredns.service
+        state: restarted
+      when: vulnerability_internal_hosts.changed
+
+- name: Publish the private vulnerability dashboard Caddy route
+  hosts: caddy_staging
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+    - ../roles/caddy/defaults/main.yml
+  tasks:
+    - name: Derive Caddy routes
+      ansible.builtin.set_fact:
+        caddy_routes: "{{ (caddy_routes | default([])) + [item.caddy | combine({'hostname': item.hostname})] }}"
+      loop: "{{ homelab_routing.routes }}"
+      when: item.caddy is defined
+      loop_control:
+        label: "{{ item.hostname }}"
+
+    - name: Validate and publish the Caddy routes
+      ansible.builtin.template:
+        src: ../roles/caddy/templates/Caddyfile.j2
+        dest: /etc/caddy/Caddyfile
+        owner: root
+        group: caddy
+        mode: '0640'
+        validate: /usr/bin/caddy validate --envfile /etc/caddy/cloudflare.env --config %s --adapter caddyfile
+        backup: true
+      register: vulnerability_caddy_routes
+
+    - name: Reload Caddy
+      ansible.builtin.systemd_service:
+        name: caddy.service
+        state: reloaded
+      when: vulnerability_caddy_routes.changed
+
+    - name: Check Dependency-Track through Caddy HTTPS
+      ansible.builtin.command:
+        argv: [curl, --fail, --silent, --show-error, --resolve, 'vulns.homelab.example:443:127.0.0.1', 'https://vulns.homelab.example/api/version']
+      changed_when: false

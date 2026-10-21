@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Tuwunel backup health hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+Unit=tuwunel-backup-health.service
+
+[Install]
+WantedBy=timers.target

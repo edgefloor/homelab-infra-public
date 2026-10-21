@@ -1,0 +1,225 @@
+---
+- name: Require the reviewed embedding checkpoint
+  ansible.builtin.assert:
+    that:
+      - news_embeddings_model == 'google/embeddinggemma-2'
+      - news_embeddings_revision == '914f7f89142e33e77833254d9c9b90c3cef7303b'
+    fail_msg: Update and validate the worker contract before changing its model revision.
+
+- name: Install native embedding prerequisites
+  ansible.builtin.apt:
+    name: [python3, python3-venv, python3-pip, ca-certificates, curl, nftables]
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the isolated embedding service account
+  ansible.builtin.user:
+    name: news-embeddings
+    home: /var/lib/news-embeddings
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: true
+
+- name: Create application, protected state and configuration directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /opt/news-embeddings, owner: root, group: root, mode: '0755'}
+    - {path: /var/lib/news-embeddings, owner: news-embeddings, group: news-embeddings, mode: '0700'}
+    - {path: /etc/news-embeddings, owner: root, group: root, mode: '0700'}
+    - {path: /var/cache/homelab-tools, owner: root, group: root, mode: '0755'}
+
+- name: Download only the host-matching NVIDIA userspace installer
+  ansible.builtin.get_url:
+    url: "{{ news_embeddings_nvidia_driver_url }}"
+    dest: "/var/cache/homelab-tools/NVIDIA-Linux-x86_64-{{ news_embeddings_nvidia_driver_version }}-no-compat32.run"
+    checksum: "sha256:{{ news_embeddings_nvidia_driver_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Probe guest NVIDIA userspace compatibility
+  ansible.builtin.command:
+    argv: [nvidia-smi, --query-gpu=driver_version, '--format=csv,noheader']
+  register: news_embeddings_driver_probe
+  changed_when: false
+  failed_when: false
+
+- name: Install userspace libraries without modifying kernel drivers
+  ansible.builtin.command:
+    argv:
+      - "/var/cache/homelab-tools/NVIDIA-Linux-x86_64-{{ news_embeddings_nvidia_driver_version }}-no-compat32.run"
+      - --silent
+      - --no-kernel-module
+      - --no-questions
+      - --accept-license
+      - --no-x-check
+      - --no-nouveau-check
+  register: news_embeddings_driver_install
+  when: news_embeddings_driver_probe.rc != 0 or news_embeddings_driver_probe.stdout | trim != news_embeddings_nvidia_driver_version
+
+- name: Verify matching guest NVIDIA userspace
+  ansible.builtin.command:
+    argv: [nvidia-smi, --query-gpu=driver_version, '--format=csv,noheader']
+  register: news_embeddings_driver_verified
+  changed_when: false
+  failed_when: news_embeddings_driver_verified.stdout | trim != news_embeddings_nvidia_driver_version
+
+- name: Install the worker and hashed Python dependency lock
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/opt/news-embeddings/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: [worker.py, requirements.lock]
+  register: news_embeddings_files
+
+- name: Create an isolated native Python environment
+  ansible.builtin.command:
+    argv: [python3, -m, venv, /opt/news-embeddings/venv]
+    creates: /opt/news-embeddings/venv/bin/python
+  register: news_embeddings_venv
+
+- name: Install only hashed binary dependencies
+  ansible.builtin.command:
+    argv: [/opt/news-embeddings/venv/bin/python, -m, pip, install, --require-hashes, '--only-binary=:all:', --no-cache-dir, --extra-index-url, 'https://download.pytorch.org/whl/cu126', -r, /opt/news-embeddings/requirements.lock]
+  when: news_embeddings_files.changed or news_embeddings_venv.changed
+  register: news_embeddings_dependencies
+
+- name: Download the complete pinned checkpoint once before offline serving
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - news-embeddings
+      - --
+      - /opt/news-embeddings/venv/bin/python
+      - -c
+      - |
+        from pathlib import Path
+        from huggingface_hub import snapshot_download
+        model='google/embeddinggemma-2'
+        revision='914f7f89142e33e77833254d9c9b90c3cef7303b'
+        state=Path('/var/lib/news-embeddings')
+        snapshot=Path(snapshot_download(model,revision=revision,cache_dir=str(state/'models')))
+        for name in ['config.json','model.safetensors','tokenizer_config.json','tokenizer.json']:
+          if not (snapshot/name).is_file():
+            raise RuntimeError('The pinned checkpoint is incomplete')
+        (state/('.checkpoint-'+revision+'.ready')).write_text('Pinned checkpoint downloaded.\n')
+    creates: "/var/lib/news-embeddings/.checkpoint-{{ news_embeddings_revision }}.ready"
+  environment:
+    HF_HOME: /var/lib/news-embeddings/huggingface
+
+- name: Initialize a persistent private helper credential
+  ansible.builtin.command:
+    argv: [python3, -c, "import os,secrets; p='/etc/news-embeddings/token'; fd=os.open(p,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600); os.write(fd,(secrets.token_urlsafe(48)+'\\n').encode()); os.close(fd)"]
+    creates: /etc/news-embeddings/token
+  no_log: true
+
+- name: Read the helper credential for the protected environment
+  ansible.builtin.slurp:
+    src: /etc/news-embeddings/token
+  register: news_embeddings_token_file
+  no_log: true
+
+- name: Write the protected service environment
+  ansible.builtin.copy:
+    dest: /etc/news-embeddings/environment
+    owner: root
+    group: root
+    mode: '0600'
+    content: |
+      NEWS_EMBEDDINGS_TOKEN={{ news_embeddings_token_file.content | b64decode | trim }}
+      NEWS_EMBEDDINGS_BIND={{ news_embeddings_bind }}
+      NEWS_EMBEDDINGS_PORT={{ news_embeddings_port }}
+      NEWS_EMBEDDINGS_MODEL={{ news_embeddings_model }}
+      NEWS_EMBEDDINGS_REVISION={{ news_embeddings_revision }}
+      NEWS_EMBEDDINGS_DEVICE={{ news_embeddings_device }}
+      NEWS_EMBEDDINGS_TORCH_THREADS={{ news_embeddings_threads }}
+      NEWS_EMBEDDINGS_STATE_DIRECTORY=/var/lib/news-embeddings
+      NEWS_EMBEDDINGS_IDLE_SECONDS={{ news_embeddings_idle_seconds }}
+      NEWS_EMBEDDINGS_LOCAL_FILES_ONLY={{ news_embeddings_local_files_only | bool | ternary('true', 'false') }}
+  register: news_embeddings_environment
+  no_log: true
+
+- name: Install only the helper's private ingress rules
+  ansible.builtin.copy:
+    dest: /etc/news-embeddings/firewall.nft
+    owner: root
+    group: root
+    mode: '0600'
+    content: |
+      add table inet news_embeddings
+      flush table inet news_embeddings
+      table inet news_embeddings {
+        chain ingress {
+          type filter hook input priority -5; policy accept;
+          iifname "lo" tcp dport {{ news_embeddings_port }} accept
+          ip saddr {{ news_embeddings_allowed_client }} tcp dport {{ news_embeddings_port }} accept
+          tcp dport {{ news_embeddings_port }} drop
+        }
+      }
+  register: news_embeddings_firewall_rules
+
+- name: Install the persistent helper firewall service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/news-embeddings-firewall.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Private ingress rules for the news embedding helper
+      After=nftables.service
+      Before=news-embeddings.service
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/news-embeddings/firewall.nft
+      [Install]
+      WantedBy=multi-user.target
+  register: news_embeddings_firewall_unit
+
+- name: Validate helper firewall syntax without modifying rules
+  ansible.builtin.command:
+    argv: [nft, --check, --file, /etc/news-embeddings/firewall.nft]
+  changed_when: false
+
+- name: Start the helper firewall before exposing the listener
+  ansible.builtin.systemd_service:
+    name: news-embeddings-firewall.service
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if news_embeddings_firewall_rules.changed or news_embeddings_firewall_unit.changed else 'started' }}"
+
+- name: Install the isolated embedding service
+  ansible.builtin.template:
+    src: news-embeddings.service.j2
+    dest: /etc/systemd/system/news-embeddings.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: news_embeddings_service_unit
+
+- name: Start the embedding helper with reviewed changes
+  ansible.builtin.systemd_service:
+    name: news-embeddings.service
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if news_embeddings_files.changed or news_embeddings_venv.changed or news_embeddings_dependencies.changed | default(false) or news_embeddings_environment.changed or news_embeddings_service_unit.changed or news_embeddings_driver_install.changed | default(false) else 'started' }}"
+
+- name: Check minimal loopback helper health without loading model weights
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ news_embeddings_port }}/healthz"
+    status_code: 200
+  register: news_embeddings_health
+  retries: 10
+  delay: 2
+  until: news_embeddings_health.status == 200

@@ -1,0 +1,14 @@
+---
+- name: Install Servarr runtime prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - sqlite3
+    state: present
+
+- name: Install configured Servarr applications
+  ansible.builtin.include_tasks: app.yml
+  loop: "{{ servarr_apps }}"
+  loop_control:
+    loop_var: servarr_app
+    label: "{{ servarr_app.display_name }} {{ servarr_app.version }}"

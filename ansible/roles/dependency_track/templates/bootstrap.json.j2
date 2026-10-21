@@ -1,0 +1,9 @@
+{{ {
+  'api_url': 'http://127.0.0.1:' ~ dependency_track_api_port ~ '/api',
+  'public_url': dependency_track_url,
+  'credentials_dir': '/root/.config/dependency-track',
+  'trivy_url': dependency_track_trivy_url,
+  'trivy_token_path': '/etc/dependency-track/trivy-token',
+  'upload_permissions': dependency_track_upload_permissions,
+  'api_key_days': dependency_track_api_key_days
+} | to_nice_json }}

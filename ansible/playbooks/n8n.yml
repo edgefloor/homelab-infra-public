@@ -1,0 +1,16 @@
+---
+- name: Configure native n8n
+  hosts: n8n_servers
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  roles:
+    - common_baseline
+    - n8n
+
+- name: Include n8n in managed backups
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  roles:
+    - managed_backup_membership

@@ -1,0 +1,19 @@
+[global]
+server_name = "{{ tuwunel_server_name }}"
+database_path = "/var/lib/tuwunel"
+address = ["{{ tuwunel_address }}"]
+port = {{ tuwunel_port }}
+new_user_displayname_suffix = ""
+error_on_unknown_config_opts = true
+max_request_size = "{{ tuwunel_max_request_size }}"
+ip_source = "{{ tuwunel_proxy_source }}"
+
+allow_registration = false
+registration_shared_secret_file = "/etc/tuwunel/.registration_shared_secret"
+allow_federation = true
+trusted_servers = ["matrix.org"]
+
+[global.well_known]
+client = "{{ tuwunel_public_url }}"
+server = "{{ tuwunel_server_name }}:443"
+livekit_url = "{{ tuwunel_livekit_url }}"

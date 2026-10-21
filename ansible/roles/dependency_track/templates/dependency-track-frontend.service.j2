@@ -1,0 +1,17 @@
+[Unit]
+Description=Dependency-Track static frontend and API proxy
+After=network-online.target dependency-track.service dependency-track-firewall.service
+Requires=dependency-track-firewall.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/nginx -t -c /etc/dependency-track/nginx.conf
+ExecStart=/usr/sbin/nginx -c /etc/dependency-track/nginx.conf -g "daemon off;"
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGQUIT
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,31 @@
+[Unit]
+Description=Shared Trivy vulnerability database and matching
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=homelab-trivy
+Group=homelab-trivy
+ExecStart=/usr/local/bin/trivy server --config %d/server.json --cache-dir /var/cache/homelab-trivy --listen 172.30.0.1:4954 --cache-backend memory
+LoadCredential=server.json:/etc/homelab-trivy/server.json
+CacheDirectory=homelab-trivy
+CacheDirectoryMode=0700
+Environment=GOMEMLIMIT=512MiB
+Restart=always
+RuntimeMaxSec=24h
+RestartSec=30s
+MemoryMax=1G
+CPUQuota=150%
+TasksMax=64
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

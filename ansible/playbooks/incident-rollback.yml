@@ -1,0 +1,67 @@
+---
+- name: Stop the replacement incident path
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Stop the reverse tunnel before freeing the Pangolin listener
+      ansible.builtin.systemd_service:
+        name: homelab-incidents-reverse-tunnel.service
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Stop the replacement incident service
+      ansible.builtin.systemd_service:
+        name: homelab-incidents.service
+        enabled: false
+        state: stopped
+      failed_when: false
+
+- name: Restore the preserved Pangolin service before cleanup
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Require the preserved incident database
+      ansible.builtin.stat:
+        path: /var/lib/homelab-incidents/incidents.db
+      register: rollback_incident_database
+
+    - name: Refuse rollback after Pangolin cleanup
+      ansible.builtin.assert:
+        that: rollback_incident_database.stat.exists
+        fail_msg: Restore the encrypted off-host backup instead. Pangolin cleanup already removed its rollback copy.
+
+    - name: Start the preserved incident service and maintenance timer
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop:
+        - homelab-incidents.service
+        - homelab-incidents-aliases.timer
+
+    - name: Verify the preserved incident API
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8790/healthz
+      register: rollback_incident_health
+      until: rollback_incident_health.status == 200
+      retries: 10
+      delay: 2
+
+    - name: Restore public forwarding
+      ansible.builtin.systemd_service:
+        name: crowdsec-matrix-bridge.service
+        state: restarted

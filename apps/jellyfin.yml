@@ -1,0 +1,25 @@
+---
+schema_version: 1
+id: jellyfin
+name: Jellyfin
+upstream:
+  repository: https://github.com/jellyfin/jellyfin
+  release: v12.0
+  commit: 6c073e19ddf604b2369c638716164fdab4c952dc
+  distribution: official_package
+runtime: native_systemd
+environments:
+  staging: { target: jellyfin, status: migrated_and_validated }
+  production: { target: jellyfin, status: active_via_caddy }
+routing: { caddy: direct_edge, pangolin: none }
+health:
+  local_url: http://127.0.0.1:8096/health
+  expected_units: [jellyfin.service]
+state:
+  paths: [/etc/jellyfin, /var/lib/jellyfin, /var/cache/jellyfin, /storage]
+  backup_required_before_cutover: true
+authentication:
+  oidc: pocket_id
+  plugin: community_sso_for_jellyfin_5.0.0.82
+  channel: jf12_beta
+  local_recovery_users: retained

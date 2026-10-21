@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenAI Tunnel Client for Miniflux MCP
+After=network-online.target miniflux-mcp.service
+Wants=network-online.target
+Requires=miniflux-mcp.service
+
+[Service]
+Type=simple
+Environment=HOME=/root
+Environment=XDG_CONFIG_HOME=/root/.config
+EnvironmentFile=/etc/tunnel-client.env
+ExecStart=/usr/local/bin/tunnel-client run --profile miniflux --health.listen-addr 127.0.0.1:8082
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

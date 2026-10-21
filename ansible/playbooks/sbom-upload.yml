@@ -1,0 +1,8 @@
+---
+- name: Configure conventional software inventories on managed systems
+  hosts: homelab_agent_targets:news_embeddings_servers
+  become: true
+  gather_facts: false
+  serial: 4
+  roles:
+    - sbom_upload

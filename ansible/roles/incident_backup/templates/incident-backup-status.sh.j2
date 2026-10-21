@@ -1,0 +1,18 @@
+#!/bin/bash
+set -euo pipefail
+
+backup_dir={{ incident_backup_receiver_dir | quote }}
+config_dir={{ incident_backup_receiver_config_dir | quote }}
+max_bytes={{ incident_backup_max_bytes }}
+
+for name in {% for source in incident_backup_sources %}{{ source.name | quote }} {% endfor %}; do
+  newest=$(find "$backup_dir" -maxdepth 1 -type f -name "$name-*.tar.zst.age" -print | sort | tail -1)
+  test -n "$newest"
+  age --decrypt -i "$config_dir/age-identity.txt" "$newest" | zstd --test --quiet
+done
+
+partials=$(find "$backup_dir" -maxdepth 1 -type f -name '*.partial' | wc -l)
+test "$partials" -eq 0
+used=$(find "$backup_dir" -maxdepth 1 -type f -name '*.tar.zst.age' -printf '%s\n' | awk '{n+=$1} END {print n+0}')
+test "$used" -le "$max_bytes"
+printf 'verified encrypted backups; bytes=%s limit=%s\n' "$used" "$max_bytes"

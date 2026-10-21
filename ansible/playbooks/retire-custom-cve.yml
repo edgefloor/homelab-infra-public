@@ -1,0 +1,147 @@
+---
+- name: Retire the custom CVE pipeline while retaining recovery state
+  hosts: homelab_agent_targets:news_embeddings_servers
+  become: true
+  gather_facts: false
+  strategy: linear
+  any_errors_fatal: true
+  vars:
+    cve_retirement_timers:
+      - cve-native-publisher.timer
+      - homelab-cve-monitor.timer
+      - homelab-scan-watchdog.timer
+      - homelab-defense-recovery.timer
+      - homelab-incidents-health.timer
+      - homelab-incidents-aliases.timer
+      - homelab-incidents-helix-sync.timer
+      - homelab-incident-backup.timer
+      - homelab-incidents-backup.timer
+      - zag-model-access.timer
+      - homelab-workspace-cleanup.timer
+      - homelab-memory-sync.timer
+    cve_retirement_services:
+      - hermes-gateway-zig.service
+      - cve-native-publisher.service
+      - zig-investigation-replies.service
+      - zag-ops-worker.service
+      - homelab-incidents-health.service
+      - homelab-cve-monitor.service
+      - homelab-scan-watchdog.service
+      - homelab-defense-recovery.service
+      - homelab-incidents-aliases.service
+      - homelab-incidents-helix-sync.service
+      - homelab-incidents.service
+      - homelab-incidents-reverse-tunnel.service
+      - helix-cve-reverse-tunnel.service
+      - homelab-incident-backup.service
+      - homelab-incidents-backup.service
+      - helix-cve.service
+      - zag-model.service
+      - zag-model-access.service
+      - zig-observation-credential-check.service
+      - homelab-repository-broker.service
+      - homelab-workspace-cleanup.service
+      - homelab-agent.service
+      - homelab-memory-sync.service
+      - zag-router.service
+      - zag-ops-gateway.service
+  pre_tasks:
+    - name: Keep external guests outside this retirement
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname not in ['next-plaid', 'eu-law-db']
+          - ansible_host not in ['10.42.0.7', '10.42.0.112', '10.42.0.115']
+        fail_msg: External guests 112 and 115 must not be included in this retirement.
+
+    - name: Require an explicitly supplied replacement health endpoint
+      ansible.builtin.assert:
+        that:
+          - cve_replacement_health_url | default('') is match('^https?://[^/@]+(/.*)?$')
+        fail_msg: Supply the verified conventional replacement's health URL before retiring the custom pipeline.
+      run_once: true
+
+    - name: Verify the replacement is healthy before changing any service
+      ansible.builtin.uri:
+        url: "{{ cve_replacement_health_url }}"
+        method: GET
+        status_code: 200
+        follow_redirects: none
+        return_content: false
+        validate_certs: true
+        timeout: 15
+      delegate_to: localhost
+      become: false
+      run_once: true
+      check_mode: false
+
+    - name: Verify retained incident and Helix recovery archives
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/homelab-incident-backup-status]
+      delegate_to: plan-runner
+      run_once: true
+      changed_when: false
+      check_mode: false
+
+    - name: Discover installed services without assuming every component exists
+      ansible.builtin.service_facts:
+
+    - name: Discover installed timers separately from service facts
+      ansible.builtin.command:
+        argv: [systemctl, list-unit-files, --type=timer, --no-legend, --no-pager, --plain]
+      register: cve_timer_unit_files
+      changed_when: false
+      check_mode: false
+
+    - name: Discover real service unit files instead of stale systemd references
+      ansible.builtin.command:
+        argv: [systemctl, list-unit-files, --type=service, --no-legend, --no-pager, --plain]
+      register: cve_service_unit_files
+      changed_when: false
+      check_mode: false
+
+    - name: Select only installed custom units
+      ansible.builtin.set_fact:
+        cve_installed_timers: >-
+          {{ cve_timer_unit_files.stdout_lines | map('split') | map('first') |
+             intersect(cve_retirement_timers) | sort }}
+        cve_installed_services: >-
+          {{ cve_retirement_services | select('in', cve_service_unit_files.stdout_lines |
+             map('split') | map('first') | list) |
+             select('in', ansible_facts.services |
+             dict2items | selectattr('value.status', 'defined') |
+             rejectattr('value.status', 'equalto', 'not-found') |
+             map(attribute='key') | list) | list }}
+
+    - name: Report the previous service state and selected timers for rollback
+      ansible.builtin.debug:
+        msg:
+          services: "{{ ansible_facts.services | dict2items | selectattr('key', 'in', cve_installed_services) | items2dict }}"
+          timer_unit_files: "{{ cve_timer_unit_files.stdout_lines | select('match', '^(' + cve_installed_timers | map('regex_escape') | join('|') + ')[ \\t]') | list }}"
+  tasks:
+    - name: Stop and disable custom scheduling before stopping services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: "{{ cve_installed_timers }}"
+
+    - name: Stop and disable the custom CVE and Zig services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: "{{ cve_installed_services }}"
+
+    - name: Verify the replacement remains healthy after retirement
+      ansible.builtin.uri:
+        url: "{{ cve_replacement_health_url }}"
+        method: GET
+        status_code: 200
+        follow_redirects: none
+        return_content: false
+        validate_certs: true
+        timeout: 15
+      delegate_to: localhost
+      become: false
+      run_once: true
+      check_mode: false

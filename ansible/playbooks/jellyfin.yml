@@ -1,0 +1,9 @@
+---
+- name: Configure the Jellyfin target
+  hosts: jellyfin_servers
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, jellyfin]
+        cve_provisioning_installations: ["deployment:jellyfin"]

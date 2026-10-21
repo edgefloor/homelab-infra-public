@@ -1,0 +1,14 @@
+---
+homelab_agent_hermes_user: "{{ homelab_investigation_execution.controller_user }}"
+homelab_agent_hermes_group: "{{ homelab_investigation_execution.shared_group }}"
+homelab_agent_hermes_account_home: "{{ homelab_investigation_execution.controller_home }}"
+homelab_agent_hermes_command: /usr/local/bin/hermes
+homelab_agent_hermes_home: "{{ homelab_investigation_execution.controller_home }}/.hermes"
+homelab_agent_workspace_root: "{{ homelab_investigation_execution.workspace_root }}"
+homelab_agent_artifact_cache: "{{ homelab_investigation_execution.artifact_cache }}"
+homelab_agent_repository_root: "{{ homelab_investigation_execution.repository_root }}"
+homelab_agent_repository_metadata_root: /var/lib/homelab-repository-metadata
+homelab_agent_known_hosts: "{{ homelab_investigation_execution.known_hosts }}"
+homelab_agent_repository_github_token: "{{ lookup('ansible.builtin.env', 'HOMELAB_REPOSITORY_GITHUB_TOKEN') }}"
+homelab_agent_repository_clone_url: https://github.com/edgefloor/homelab-infra-public.git
+homelab_agent_repository_slug: edgefloor/homelab-infra

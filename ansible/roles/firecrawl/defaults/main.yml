@@ -1,0 +1,19 @@
+---
+firecrawl_repository: https://github.com/firecrawl/firecrawl.git
+firecrawl_version: v2.11.373
+firecrawl_commit: b72cd5fe22866a1aa0b55c296843096951f46884
+firecrawl_install_dir: /opt/firecrawl
+firecrawl_source_dir: "{{ firecrawl_install_dir }}/source"
+firecrawl_runtime_dir: "{{ firecrawl_install_dir }}/runtime"
+firecrawl_secrets_dir: "{{ firecrawl_install_dir }}/secrets"
+firecrawl_port: 3002
+firecrawl_workers_per_queue: 8
+firecrawl_concurrent_requests: 10
+firecrawl_max_concurrent_jobs: 5
+firecrawl_browser_pool_size: 5
+
+searxng_version: 2026.9.20-2e624bed4
+searxng_image: docker.io/searxng/searxng@sha256:838129fc40eebf1555e501492db48566b5f3e1a924d52cb76f41d4da67c6bb88
+searxng_listen_address: 0.0.0.0
+searxng_port: 8080
+searxng_endpoint: http://searxng:8080

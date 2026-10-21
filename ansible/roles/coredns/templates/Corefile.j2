@@ -1,0 +1,22 @@
+.:53 {
+    bind {{ coredns_listen_addresses | join(' ') }}
+    errors
+    health 127.0.0.1:8080
+    ready 127.0.0.1:8181
+    hosts /var/lib/coredns/adblock/blocked.hosts {
+        import /etc/coredns/internal.hosts
+        ttl 60
+        no_reverse
+        reload 5s
+        fallthrough
+    }
+    forward . {{ coredns_upstreams | join(' ') }} {
+{% if coredns_upstream_tls_servername | default('') %}
+        tls_servername {{ coredns_upstream_tls_servername }}
+{% endif %}
+        policy random
+        health_check 5s
+    }
+    cache 60
+    reload 10s
+}

@@ -1,0 +1,6 @@
+---
+- name: Configure the pull-request plan runner
+  hosts: plan_runners
+  become: true
+  roles:
+    - plan_runner

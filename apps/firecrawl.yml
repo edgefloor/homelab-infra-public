@@ -1,0 +1,32 @@
+---
+schema_version: 1
+id: firecrawl
+name: Firecrawl
+upstream:
+  repository: https://github.com/firecrawl/firecrawl
+  release: v2.11.373
+  commit: b72cd5fe22866a1aa0b55c296843096951f46884
+  distribution: source_build
+runtime: docker_compose
+environments:
+  staging: { target: firecrawl, status: deployed_and_validated }
+  production: { target: firecrawl, status: active_lan_only }
+routing: { caddy: lan, pangolin: none }
+health:
+  local_url: https://firecrawl.homelab.example/
+  expected_units: [docker.service, firecrawl.service]
+state:
+  paths: [/opt/firecrawl/runtime/.env, /var/lib/docker/volumes]
+  backup_required_before_cutover: false
+provisioning:
+  source: fresh_managed_guest
+  import_external_workload_state: false
+containerization:
+  reason: Firecrawl's supported self-host stack couples its Node workers to Playwright, PostgreSQL, RabbitMQ, and Redis through Docker Compose.
+network:
+  exposure: lan_only_https
+  port: 3002
+  authentication: disabled_on_trusted_lan
+search:
+  provider: searxng
+  endpoint: http://searxng:8080

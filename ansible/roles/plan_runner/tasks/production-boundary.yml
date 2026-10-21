@@ -1,0 +1,54 @@
+---
+- name: Discover the installed runner service
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ github_runner_service_name }}"
+  register: production_boundary_runner_service
+
+- name: Stop and disable the retired production-adjacent CI runner
+  ansible.builtin.systemd_service:
+    name: "{{ github_runner_service_name }}"
+    state: stopped
+    enabled: false
+  when:
+    - production_boundary_runner_service.stat.exists
+    - not github_runner_enabled | bool
+
+- name: Protect the entire production state tree from the runner
+  ansible.builtin.file:
+    path: /var/lib/homelab-tofu
+    state: directory
+    owner: root
+    group: root
+    mode: u=rwX,go=
+    recurse: true
+    follow: false
+
+- name: Check whether provider credentials already exist
+  ansible.builtin.stat:
+    path: /etc/homelab-tofu-proxmox.env
+    follow: false
+  register: production_boundary_credentials
+
+- name: Require an ordinary provider credential file
+  ansible.builtin.assert:
+    that:
+      - production_boundary_credentials.stat.isreg | default(false)
+      - not production_boundary_credentials.stat.islnk | default(false)
+    fail_msg: Refusing to change a non-regular production credential path.
+  when: production_boundary_credentials.stat.exists
+
+- name: Preserve existing credentials with root-only access
+  ansible.builtin.file:
+    path: /etc/homelab-tofu-proxmox.env
+    owner: root
+    group: root
+    mode: '0600'
+  when: production_boundary_credentials.stat.exists
+
+- name: Install the root-only operator provisioning wrapper
+  ansible.builtin.copy:
+    src: homelab-tofu
+    dest: /usr/local/bin/homelab-tofu
+    owner: root
+    group: root
+    mode: '0700'

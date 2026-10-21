@@ -1,0 +1,354 @@
+---
+- name: Install Jellyfin repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - unzip
+    state: present
+
+- name: Create the Jellyfin group with media-compatible ID
+  ansible.builtin.group:
+    name: "{{ jellyfin_group }}"
+    gid: "{{ jellyfin_gid }}"
+    system: true
+
+- name: Create the Jellyfin user with media-compatible ID
+  ansible.builtin.user:
+    name: "{{ jellyfin_user }}"
+    uid: "{{ jellyfin_uid }}"
+    group: "{{ jellyfin_group }}"
+    home: /var/lib/jellyfin
+    shell: /bin/false
+    system: true
+    create_home: true
+
+- name: Download the official Jellyfin repository key
+  ansible.builtin.get_url:
+    url: https://repo.jellyfin.org/jellyfin_team.gpg.key
+    dest: /usr/share/keyrings/jellyfin-team.asc
+    checksum: "sha256:{{ jellyfin_repository_key_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install the Jellyfin repository keyring
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --dearmor
+      - --output
+      - /usr/share/keyrings/jellyfin.gpg
+      - /usr/share/keyrings/jellyfin-team.asc
+  args:
+    creates: /usr/share/keyrings/jellyfin.gpg
+
+- name: Configure the official Jellyfin repository
+  ansible.builtin.copy:
+    content: |
+      Types: deb
+      URIs: https://repo.jellyfin.org/debian
+      Suites: trixie
+      Components: main
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/jellyfin.gpg
+    dest: /etc/apt/sources.list.d/jellyfin.sources
+    owner: root
+    group: root
+    mode: '0644'
+  register: jellyfin_repository
+
+- name: Pin the declared Jellyfin package versions
+  ansible.builtin.copy:
+    content: |
+      Package: jellyfin jellyfin-server jellyfin-web
+      Pin: version {{ jellyfin_package_version }}
+      Pin-Priority: 1001
+
+      Package: {{ jellyfin_ffmpeg_package }}
+      Pin: version {{ jellyfin_ffmpeg_version }}
+      Pin-Priority: 1001
+    dest: /etc/apt/preferences.d/jellyfin
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install pinned official Jellyfin packages
+  ansible.builtin.apt:
+    name:
+      - "jellyfin={{ jellyfin_package_version }}"
+      - "jellyfin-server={{ jellyfin_package_version }}"
+      - "jellyfin-web={{ jellyfin_package_version }}"
+      - "{{ jellyfin_ffmpeg_package }}={{ jellyfin_ffmpeg_version }}"
+    state: present
+    update_cache: "{{ jellyfin_repository.changed }}"
+    allow_downgrade: true
+  register: jellyfin_packages
+
+- name: Add Jellyfin to media device groups
+  ansible.builtin.user:
+    name: "{{ jellyfin_user }}"
+    groups:
+      - video
+      - render
+    append: true
+  register: jellyfin_media_groups
+
+- name: Create the Jellyfin plugin cache
+  ansible.builtin.file:
+    path: /var/cache/homelab-tools/jellyfin-plugins
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Download pinned Jellyfin plugins
+  ansible.builtin.get_url:
+    url: "{{ item.archive_url }}"
+    dest: "/var/cache/homelab-tools/jellyfin-plugins/{{ item.name | lower | replace(' ', '-') }}-{{ item.version }}.zip"
+    checksum: "sha256:{{ item.archive_sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ jellyfin_plugins }}"
+
+- name: Create pinned Jellyfin plugin directories
+  ansible.builtin.file:
+    path: "/var/lib/jellyfin/plugins/{{ item.name }}_{{ item.version }}"
+    state: directory
+    owner: "{{ jellyfin_user }}"
+    group: "{{ jellyfin_group }}"
+    mode: '0755'
+  loop: "{{ jellyfin_plugins }}"
+
+- name: Install pinned Jellyfin plugin assemblies
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/jellyfin-plugins/{{ item.name | lower | replace(' ', '-') }}-{{ item.version }}.zip"
+    dest: "/var/lib/jellyfin/plugins/{{ item.name }}_{{ item.version }}"
+    remote_src: true
+    owner: "{{ jellyfin_user }}"
+    group: "{{ jellyfin_group }}"
+    creates: "/var/lib/jellyfin/plugins/{{ item.name }}_{{ item.version }}/{{ item.assembly }}"
+  loop: "{{ jellyfin_plugins }}"
+  register: jellyfin_plugin_assemblies
+
+- name: Record pinned Jellyfin plugin metadata
+  ansible.builtin.copy:
+    content: |-
+      {{ {
+        'autoUpdate': item.auto_update | default(false),
+        'category': item.category,
+        'guid': item.guid,
+        'name': item.name,
+        'owner': item.owner,
+        'status': 'Active',
+        'targetAbi': item.target_abi,
+        'timestamp': item.timestamp,
+        'version': item.version
+      } | to_nice_json }}
+    dest: "/var/lib/jellyfin/plugins/{{ item.name }}_{{ item.version }}/meta.json"
+    owner: "{{ jellyfin_user }}"
+    group: "{{ jellyfin_group }}"
+    mode: '0644'
+  loop: "{{ jellyfin_plugins }}"
+  register: jellyfin_plugin_metadata
+
+- name: Install the Jellyfin SSO role migration helper
+  ansible.builtin.copy:
+    src: configure_sso_roles.py
+    dest: /usr/local/libexec/configure-jellyfin-sso-roles
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Inspect the existing Jellyfin SSO configuration
+  ansible.builtin.stat:
+    path: "{{ jellyfin_sso_config_path }}"
+  register: jellyfin_sso_config
+
+- name: Read stable subjects for existing Pocket ID users
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import json, sqlite3, sys;
+        connection = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True);
+        print(json.dumps(dict(connection.execute(
+        'SELECT username, id FROM users WHERE disabled = 0'))))
+      - "{{ jellyfin_sso_identity_database }}"
+  delegate_to: "{{ jellyfin_sso_identity_host }}"
+  become: true
+  register: jellyfin_sso_identity_map
+  changed_when: false
+  when: jellyfin_sso_config.stat.exists
+
+- name: Allow the current Pocket ID Jellyfin role
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/configure-jellyfin-sso-roles
+      - --config
+      - "{{ jellyfin_sso_config_path }}"
+      - --provider
+      - "{{ jellyfin_sso_provider }}"
+      - --allow-role
+      - "{{ jellyfin_sso_access_role }}"
+      - --identity-map-json
+      - "{{ jellyfin_sso_identity_map.stdout }}"
+  register: jellyfin_sso_role_migration
+  changed_when: jellyfin_sso_role_migration.stdout == 'updated'
+  when: jellyfin_sso_config.stat.exists
+
+- name: Create the NVIDIA driver cache directory
+  ansible.builtin.file:
+    path: /var/cache/homelab-tools
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: jellyfin_nvidia_enabled
+
+- name: Download the host-matching NVIDIA userspace driver
+  ansible.builtin.get_url:
+    url: "{{ jellyfin_nvidia_driver_url }}"
+    dest: "/var/cache/homelab-tools/NVIDIA-Linux-x86_64-{{ jellyfin_nvidia_driver_version }}-no-compat32.run"
+    checksum: "sha256:{{ jellyfin_nvidia_driver_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+  when: jellyfin_nvidia_enabled
+
+- name: Read the active NVIDIA userspace driver version
+  ansible.builtin.command:
+    argv:
+      - nvidia-smi
+      - --query-gpu=driver_version
+      - --format=csv,noheader
+  register: jellyfin_nvidia_driver_probe
+  changed_when: false
+  failed_when: false
+  when: jellyfin_nvidia_enabled
+
+- name: Install the host-matching NVIDIA userspace driver
+  ansible.builtin.command:
+    argv:
+      - "/var/cache/homelab-tools/NVIDIA-Linux-x86_64-{{ jellyfin_nvidia_driver_version }}-no-compat32.run"
+      - --silent
+      - --no-kernel-module
+      - --no-questions
+      - --accept-license
+      - --no-x-check
+      - --no-nouveau-check
+  register: jellyfin_nvidia_driver_install
+  when:
+    - jellyfin_nvidia_enabled
+    - >-
+      jellyfin_nvidia_driver_probe.rc != 0 or
+      jellyfin_nvidia_driver_probe.stdout | trim != jellyfin_nvidia_driver_version
+
+- name: Apply requested Jellyfin service state with current packages and groups
+  ansible.builtin.systemd_service:
+    name: jellyfin.service
+    enabled: "{{ jellyfin_start_service }}"
+    state: >-
+      {{
+        'restarted'
+        if jellyfin_start_service and (
+          jellyfin_packages.changed or
+          jellyfin_media_groups.changed or
+          jellyfin_plugin_assemblies.changed or
+          jellyfin_plugin_metadata.changed or
+          jellyfin_sso_role_migration.changed | default(false) or
+          jellyfin_nvidia_driver_install.changed | default(false)
+        )
+        else ('started' if jellyfin_start_service else 'stopped')
+      }}
+
+- name: Check for migrated Jellyfin encoding settings
+  ansible.builtin.stat:
+    path: /etc/jellyfin/encoding.xml
+  register: jellyfin_encoding_settings
+
+- name: Configure Jellyfin hardware acceleration
+  ansible.builtin.replace:
+    path: /etc/jellyfin/encoding.xml
+    regexp: '<HardwareAccelerationType>[^<]+</HardwareAccelerationType>'
+    replace: '<HardwareAccelerationType>{{ jellyfin_hardware_acceleration_type }}</HardwareAccelerationType>'
+    backup: true
+  register: jellyfin_hardware_acceleration
+  when:
+    - jellyfin_nvidia_enabled
+    - jellyfin_encoding_settings.stat.exists
+
+- name: Limit temporary transcoding cache growth
+  ansible.builtin.replace:
+    path: /etc/jellyfin/encoding.xml
+    regexp: '<{{ item.key }}>[^<]*</{{ item.key }}>'
+    replace: '<{{ item.key }}>{{ item.value | bool | ternary("true", "false") }}</{{ item.key }}>'
+    backup: true
+  loop:
+    - { key: EnableThrottling, value: "{{ jellyfin_transcode_throttling_enabled }}" }
+    - { key: EnableSegmentDeletion, value: "{{ jellyfin_transcode_segment_deletion_enabled }}" }
+  register: jellyfin_transcode_cache_configuration
+  when: jellyfin_encoding_settings.stat.exists
+
+- name: Restart Jellyfin after changing encoding settings
+  ansible.builtin.systemd_service:
+    name: jellyfin.service
+    state: restarted
+  when:
+    - jellyfin_start_service
+    - >-
+      jellyfin_hardware_acceleration.changed | default(false) or
+      jellyfin_transcode_cache_configuration.changed | default(false)
+
+- name: Check for migrated Jellyfin network settings
+  ansible.builtin.stat:
+    path: /etc/jellyfin/network.xml
+  register: jellyfin_network_settings
+
+- name: Trust the declared reverse proxies in Jellyfin
+  ansible.builtin.replace:
+    path: /etc/jellyfin/network.xml
+    regexp: >-
+      <KnownProxies\s*/>|<KnownProxies>[^<]*(?:<string>[^<]*</string>[^<]*)*</KnownProxies>
+    replace: |-
+      <KnownProxies>
+      {% for proxy in jellyfin_known_proxies %}
+        <string>{{ proxy }}</string>
+      {% endfor %}
+      </KnownProxies>
+    backup: true
+  register: jellyfin_known_proxy_configuration
+  when: jellyfin_network_settings.stat.exists
+
+- name: Restart Jellyfin after changing trusted proxies
+  ansible.builtin.systemd_service:
+    name: jellyfin.service
+    state: restarted
+  when:
+    - jellyfin_start_service
+    - jellyfin_known_proxy_configuration.changed | default(false)
+
+- name: Read installed Jellyfin server version
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - -W
+      - "-f=${Version}"
+      - jellyfin-server
+  register: jellyfin_installed_version
+  changed_when: false
+  failed_when: jellyfin_installed_version.stdout != jellyfin_package_version
+
+- name: Check Jellyfin health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jellyfin_port }}/health"
+    return_content: true
+    status_code: 200
+  register: jellyfin_health
+  retries: 30
+  delay: 2
+  until: jellyfin_health.content == 'Healthy'
+  when: jellyfin_start_service

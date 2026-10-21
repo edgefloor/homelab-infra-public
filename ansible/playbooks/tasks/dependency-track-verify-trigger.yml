@@ -1,0 +1,17 @@
+---
+- name: Require the native next trigger to be a future 08:00 UTC
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import datetime, sys, time
+        epoch_ms = int(sys.argv[1])
+        trigger = datetime.datetime.fromtimestamp(epoch_ms / 1000, datetime.timezone.utc)
+        if (trigger.hour, trigger.minute, trigger.second, trigger.microsecond) != (8, 0, 0, 0):
+            raise SystemExit('Native next trigger is not 08:00:00 UTC')
+        if epoch_ms <= time.time() * 1000:
+            raise SystemExit('Native next trigger is not in the future')
+        print(trigger.isoformat())
+      - "{{ dtrack_verify_trigger_epoch_ms | string }}"
+  changed_when: false

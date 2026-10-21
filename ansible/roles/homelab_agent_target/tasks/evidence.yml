@@ -1,0 +1,26 @@
+---
+- name: Require explicit opt-in to the retired custom CVE pipeline
+  ansible.builtin.import_role:
+    name: legacy_cve_guard
+  tags: [always]
+
+- name: Install the evidence gateway policy
+  ansible.builtin.copy:
+    content: >-
+      {{ {'config_roots': homelab_agent_evidence_config_roots,
+          'config_files': homelab_agent_evidence_config_files,
+          'max_calls': homelab_agent_evidence_max_calls,
+          'max_total_bytes': homelab_agent_evidence_max_bytes,
+          'max_seconds': homelab_agent_evidence_max_seconds} | to_nice_json }}
+    dest: /etc/homelab-agent/evidence-policy.json
+    owner: root
+    group: "{{ homelab_agent_target_group }}"
+    mode: '0640'
+
+- name: Install the read-only evidence gateway
+  ansible.builtin.copy:
+    src: homelab_evidence_gateway.py
+    dest: /usr/local/libexec/homelab-evidence-gateway
+    owner: root
+    group: root
+    mode: '0755'

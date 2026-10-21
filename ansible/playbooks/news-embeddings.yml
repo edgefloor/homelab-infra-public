@@ -1,0 +1,14 @@
+---
+- name: Configure the private news embedding helper
+  hosts: news_embeddings_servers
+  become: true
+  roles:
+    - common_baseline
+    - news_embeddings
+
+- name: Include the embedding helper in managed backups
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  roles:
+    - managed_backup_membership

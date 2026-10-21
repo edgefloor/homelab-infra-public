@@ -1,0 +1,25 @@
+[Unit]
+Description=Upload installed software CycloneDX inventories to Dependency-Track
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n /run/homelab-sbom/collector.lock /usr/local/sbin/homelab-sbom-upload --config {{ sbom_upload_config_dir }}/config.json
+TimeoutStartSec=90min
+UMask=0077
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+Environment=GOMEMLIMIT=256MiB
+RuntimeDirectory=homelab-sbom
+RuntimeDirectoryMode=0700
+StateDirectory=homelab-sbom
+StateDirectoryMode=0700
+CacheDirectory=homelab-sbom
+CacheDirectoryMode=0700
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={{ sbom_upload_state_dir }} {{ sbom_upload_cache_dir }}

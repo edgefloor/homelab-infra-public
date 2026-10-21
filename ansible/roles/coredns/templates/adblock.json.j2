@@ -1,0 +1,1 @@
+{{ (coredns_adblock | combine({'protected_domains': [homelab_routing.base_domain], 'minimum_domains': 10000})) | to_nice_json }}

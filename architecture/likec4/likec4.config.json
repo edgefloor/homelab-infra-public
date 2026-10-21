@@ -1,0 +1,23 @@
+{
+  "$schema": "https://likec4.dev/schemas/config.json",
+  "name": "homelab",
+  "title": "Example Homelab",
+  "metadata": {
+    "owner": "personal infrastructure",
+    "sourceOfTruth": "inventory/routes.yml"
+  },
+  "landingPage": {
+    "redirect": true
+  },
+  "styles": {
+    "defaults": {
+      "relationship": {
+        "arrow": "vee"
+      },
+      "group": {
+        "opacity": 12,
+        "border": "dashed"
+      }
+    }
+  }
+}

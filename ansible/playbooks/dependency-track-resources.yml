@@ -1,0 +1,71 @@
+---
+- name: Increase resources on the existing incident guest for Dependency-Track
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Create a private isolated OpenTofu root
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: dependency-track-tofu-
+      register: dtrack_tofu_root
+
+    - name: Plan and apply the constrained resource change
+      block:
+        - name: Stage the complete current Proxmox root
+          ansible.builtin.copy:
+            src: "../../tofu/proxmox/{{ item }}"
+            dest: "{{ dtrack_tofu_root.path }}/{{ item }}"
+            mode: '0600'
+          loop: >-
+            {{ (query('ansible.builtin.fileglob', playbook_dir + '/../../tofu/proxmox/*.tf')
+                | map('basename') | sort | list) + ['.terraform.lock.hcl'] }}
+
+        - name: Stage the strict plan guard
+          ansible.builtin.copy:
+            src: ../../scripts/guard_dependency_track_plan.py
+            dest: "{{ dtrack_tofu_root.path }}/guard.py"
+            mode: '0600'
+
+        - name: Initialize OpenTofu against the existing state
+          ansible.builtin.command:
+            argv: [homelab-tofu, init, -reconfigure, -input=false]
+            chdir: "{{ dtrack_tofu_root.path }}"
+          changed_when: false
+
+        - name: Save a full-root plan
+          ansible.builtin.command:
+            argv: [homelab-tofu, plan, -input=false, -no-color, -detailed-exitcode, '-out=resources.tfplan']
+            chdir: "{{ dtrack_tofu_root.path }}"
+          register: dtrack_resource_plan
+          changed_when: dtrack_resource_plan.rc == 2
+          failed_when: dtrack_resource_plan.rc not in [0, 2]
+          no_log: true
+
+        - name: Require only the reviewed guest CPU and memory change
+          ansible.builtin.shell: |
+            set -o pipefail
+            homelab-tofu show -json resources.tfplan | python3 guard.py
+          args:
+            executable: /bin/bash
+            chdir: "{{ dtrack_tofu_root.path }}"
+          changed_when: false
+
+        - name: Apply the exact reviewed plan
+          ansible.builtin.command:
+            argv: [homelab-tofu, apply, -input=false, -no-color, -auto-approve, resources.tfplan]
+            chdir: "{{ dtrack_tofu_root.path }}"
+          when: dtrack_resource_plan.rc == 2
+
+        - name: Verify the full root converged
+          ansible.builtin.command:
+            argv: [homelab-tofu, plan, -input=false, -no-color, -detailed-exitcode]
+            chdir: "{{ dtrack_tofu_root.path }}"
+          changed_when: false
+          no_log: true
+      always:
+        - name: Remove the saved plan and private staging directory
+          ansible.builtin.file:
+            path: "{{ dtrack_tofu_root.path }}"
+            state: absent

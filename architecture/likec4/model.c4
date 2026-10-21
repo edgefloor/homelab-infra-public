@@ -1,0 +1,326 @@
+model {
+  operator = person 'Operator' {
+    description 'Primary administrator and infrastructure owner'
+  }
+
+  household = person 'Trusted household user' {
+    description 'Uses explicitly granted media and information services'
+  }
+
+  remote_browser = client 'Remote browser' {
+    description 'Browser outside the home network'
+  }
+
+  lan_client = client 'LAN client' {
+    description 'Device using the router-advertised CoreDNS resolver'
+  }
+
+  pangolin_client = client 'Pangolin device client' {
+    description 'Enrolled device using Pangolin private-resource access when needed'
+    style {
+      shape mobile
+    }
+  }
+
+  cloudflare = externalSystem 'Cloudflare authoritative DNS' {
+    description 'DNS records only; no Cloudflare proxy or tunnel'
+    icon tech:cloudflare
+  }
+
+  matrix_federation = externalSystem 'Matrix federation' {
+    description 'External Matrix homeservers and clients'
+  }
+
+  openai = externalSystem 'OpenAI' {
+    description 'Remote endpoint reached by the Miniflux tunnel client'
+    icon tech:openai
+  }
+
+  upstream_projects = externalSystem 'Upstream projects & CVE feeds' {
+    description 'Release RSS feeds and vulnerability databases'
+  }
+
+  homelab = estate 'Example personal infrastructure' {
+    description 'Two independent failure domains: a home Proxmox site and a small public VPS'
+
+    identity = domain 'Identity & access' {
+      pocketid = identityProvider 'Pocket ID' {
+        technology 'OIDC · passkeys'
+        description 'Home-hosted central identity provider. Applications still create their own sessions.'
+      }
+
+      infrastructure = accessPolicy 'Infrastructure access' {
+        description 'Pocket ID group and matching Pangolin role'
+      }
+
+      media = accessPolicy 'Media access' {
+        description 'Pocket ID group and matching Pangolin role'
+      }
+
+      downloads = accessPolicy 'Downloads access' {
+        description 'Pocket ID group and matching Pangolin role'
+      }
+
+      jellyfin = accessPolicy 'Jellyfin access' {
+        description 'Pocket ID group and Pangolin role limited to Seerr'
+      }
+
+      recovery = accessPolicy 'Local recovery credentials' {
+        description 'Separate break-glass accounts for Pangolin, Proxmox, and selected applications'
+        style {
+          color securityRose
+        }
+      }
+    }
+
+    remote = domain 'Remote edge · Example Hosting VPS' {
+      gerbil = networkService 'Gerbil' {
+        technology 'WireGuard data plane'
+        description 'Pangolin tunnel networking on the VPS'
+      }
+
+      traefik = edgeService 'Traefik' {
+        technology 'HTTPS edge'
+        description 'Terminates public web traffic and applies the CrowdSec bouncer'
+        icon tech:traefik-proxy
+      }
+
+      pangolin = edgeService 'Pangolin' {
+        technology 'Zero-trust access gateway'
+        description 'Authenticates browser users, evaluates roles, and routes lightweight remote applications'
+      }
+
+      vps_crowdsec = securityService 'VPS CrowdSec' {
+        description 'Analyzes Traefik and SSH events; enforces at Traefik and nftables'
+      }
+
+      beszel = monitoringService 'Beszel Hub' {
+        description 'Lives outside the home failure domain; receives outbound agent telemetry'
+      }
+    }
+
+    home_edge = domain 'Home edge & network' {
+      asus = networkService 'ASUS router' {
+        description 'Current gateway; TCP 443 forwards to Caddy and DHCP advertises CoreDNS'
+      }
+
+      coredns = networkService 'CoreDNS' {
+        technology 'Split DNS'
+        description 'Resolves internal service names to Caddy while forwarding all other DNS'
+      }
+
+      ddns = automationService 'Cloudflare DDNS' {
+        description 'Reconciles the dynamic direct-home A records'
+      }
+
+      caddy = edgeService 'Caddy' {
+        technology 'Home HTTPS edge'
+        description 'Terminates trusted wildcard TLS and preserves real client addresses'
+      }
+
+      newt = networkService 'Newt' {
+        technology 'Outbound Pangolin connector'
+        description 'The only required home-to-VPS tunnel'
+      }
+
+      home_crowdsec = securityService 'Home CrowdSec' {
+        description 'Analyzes Caddy and SSH events; enforces with nftables'
+      }
+    }
+
+    services = domain 'Applications' {
+      infrastructure_apps = domain 'Infrastructure' {
+        proxmox = application 'Proxmox VE' {
+          technology 'Native Pocket ID OIDC'
+          description 'Administrative UI with /sso shortcut and root@pam recovery'
+          icon bootstrap:motherboard
+        }
+
+        router_ui = application 'Router UI' {
+          technology 'Native password'
+          description 'Internal-only Caddy route'
+        }
+
+        filebrowser = application 'File Browser' {
+          technology 'Native password'
+          description 'Internal-only Caddy route'
+        }
+
+        nerocd = application 'NeroCD' {
+          technology 'Native login'
+          description 'Internal-only Caddy route with private application and database listeners'
+        }
+      }
+
+      media_apps = domain 'Media' {
+        jellyfin = protocolService 'Jellyfin' {
+          technology 'Native Pocket ID OIDC + local account'
+          description 'Direct-home route for bandwidth and native clients'
+          icon bootstrap:collection-play
+        }
+
+        shelfmark = application 'Shelfmark' {
+          technology 'Native Pocket ID OIDC'
+        }
+
+        seerr = application 'Seerr' {
+          technology 'Native Pocket ID OIDC'
+          description 'Media requests; OIDC identity is linked to the existing Jellyfin-backed account'
+        }
+
+        radarr = application 'Radarr' {
+          technology 'Native password'
+        }
+
+        sonarr = application 'Sonarr' {
+          technology 'Native password'
+        }
+
+        prowlarr = application 'Prowlarr' {
+          technology 'Native password'
+        }
+      }
+
+      download_apps = domain 'Downloads' {
+        transmission = application 'Transmission' {
+          technology 'Pangolin gate remotely · trusted LAN locally'
+          description 'Native RPC authentication is disabled'
+        }
+      }
+
+      information_apps = domain 'Information' {
+        miniflux = application 'Miniflux' {
+          technology 'Pangolin identity header remotely · Pocket ID OIDC on LAN'
+          icon bootstrap:rss
+        }
+
+        miniflux_db = dataStore 'Miniflux PostgreSQL' {
+          technology 'PostgreSQL 17'
+          icon tech:postgresql
+        }
+
+        miniflux_mcp = protocolService 'Miniflux MCP' {
+          technology 'MCP server'
+        }
+
+        openai_tunnel = networkService 'OpenAI tunnel client' {
+          description 'Outbound tunnel colocated with Miniflux'
+        }
+      }
+
+      communication_apps = domain 'Communication' {
+        tuwunel = protocolService 'Tuwunel' {
+          technology 'Matrix homeserver'
+          description 'Direct VPS client and federation traffic'
+        }
+
+        matrix_rtc = protocolService 'MatrixRTC' {
+          technology 'LiveKit and JWT service'
+          description 'VPS signaling through Traefik with direct media ports'
+        }
+
+        matrix_bridge = automationService 'Matrix alert bridge' {
+          description 'Routes concise notices by type into the private Homelab Space'
+        }
+      }
+    }
+
+    operations = domain 'Operations' {
+      beszel_agents = monitoringService 'Beszel agents' {
+        description 'Native outbound agents on the VPS, Proxmox host, and important LXCs'
+      }
+
+      update_monitor = automationService 'Release & CVE monitor' {
+        description 'Release RSS polling plus daily fixable HIGH/CRITICAL vulnerability scans'
+      }
+
+      plan_runner = automationService 'Plan runner' {
+        technology 'GitHub Actions · Ansible · OpenTofu'
+        description 'Dedicated self-hosted runner for repository validation and controlled changes'
+      }
+    }
+  }
+
+  operator .request remote_browser 'uses remotely'
+  operator .request lan_client 'uses at home'
+  operator .oidc homelab.identity.pocketid 'authenticates with a personal identity'
+  operator .manages homelab.identity.recovery 'holds break-glass credentials'
+  household .request remote_browser 'uses approved services remotely'
+  household .oidc homelab.identity.pocketid 'authenticates with a personal identity'
+  operator .request pangolin_client 'enrolls selected devices'
+
+  remote_browser .dns cloudflare 'resolves public service names'
+  pangolin_client .dns cloudflare 'resolves service names'
+  cloudflare .dns homelab.remote.traefik 'Pangolin browser routes and Matrix protocols'
+  cloudflare .dns homelab.home_edge.asus 'auth and Jellyfin direct-home routes'
+  homelab.home_edge.ddns .dns cloudflare 'updates dynamic home records'
+
+  remote_browser .request homelab.remote.traefik 'opens a remote browser application'
+  pangolin_client .tunnel homelab.remote.gerbil 'private device path'
+  homelab.remote.traefik .request homelab.remote.pangolin 'hands browser access to Pangolin'
+  homelab.remote.pangolin .tunnel homelab.home_edge.newt 'routes the Home site'
+  homelab.remote.gerbil .tunnel homelab.home_edge.newt 'carries the encrypted data plane'
+  homelab.home_edge.newt .request homelab.home_edge.caddy 'forwards only declared home resources'
+
+  lan_client .dns homelab.home_edge.coredns 'uses router-advertised DNS'
+  homelab.home_edge.coredns .dns homelab.home_edge.caddy 'returns 10.42.0.202 for internal routes'
+  lan_client .request homelab.home_edge.caddy 'connects directly on the LAN'
+  homelab.home_edge.asus .request homelab.home_edge.caddy 'forwards public TCP 443'
+
+  homelab.remote.pangolin .oidc homelab.identity.pocketid 'authenticates browser access'
+  homelab.remote.pangolin .authorizes homelab.identity.infrastructure 'evaluates role'
+  homelab.remote.pangolin .authorizes homelab.identity.media 'evaluates role'
+  homelab.remote.pangolin .authorizes homelab.identity.downloads 'evaluates role'
+  homelab.remote.pangolin .authorizes homelab.identity.jellyfin 'evaluates role'
+  homelab.identity.infrastructure .authorizes homelab.services.infrastructure_apps.proxmox 'permits remote access'
+  homelab.identity.infrastructure .authorizes homelab.remote.beszel 'permits remote access'
+  homelab.identity.media .authorizes homelab.services.media_apps.shelfmark 'permits remote access'
+  homelab.identity.media .authorizes homelab.services.media_apps.seerr 'permits remote access'
+  homelab.identity.media .authorizes homelab.services.media_apps.radarr 'permits remote access'
+  homelab.identity.media .authorizes homelab.services.media_apps.sonarr 'permits remote access'
+  homelab.identity.media .authorizes homelab.services.media_apps.prowlarr 'permits remote access'
+  homelab.identity.media .authorizes homelab.services.information_apps.miniflux 'permits remote access'
+  homelab.identity.downloads .authorizes homelab.services.download_apps.transmission 'permits remote access'
+  homelab.identity.jellyfin .authorizes homelab.services.media_apps.seerr 'permits remote access'
+
+  homelab.services.infrastructure_apps.proxmox .oidc homelab.identity.pocketid 'creates a Proxmox application session'
+  homelab.remote.beszel .oidc homelab.identity.pocketid 'creates a Beszel application session'
+  homelab.services.media_apps.jellyfin .oidc homelab.identity.pocketid 'creates a Jellyfin application session'
+  homelab.services.media_apps.shelfmark .oidc homelab.identity.pocketid 'creates a Shelfmark application session'
+  homelab.services.information_apps.miniflux .oidc homelab.identity.pocketid 'creates a LAN application session'
+  homelab.remote.pangolin .identityHeader homelab.services.information_apps.miniflux 'maps the remote identity to an existing user'
+
+  homelab.home_edge.caddy .request homelab.identity.pocketid 'direct auth route'
+  homelab.home_edge.caddy .request homelab.services.infrastructure_apps.proxmox 'internal and tunneled route'
+  homelab.home_edge.caddy .request homelab.services.infrastructure_apps.router_ui 'internal-only route'
+  homelab.home_edge.caddy .request homelab.services.infrastructure_apps.filebrowser 'internal-only route'
+  homelab.home_edge.caddy .request homelab.services.infrastructure_apps.nerocd 'internal-only route'
+  homelab.home_edge.caddy .request homelab.services.media_apps.jellyfin 'direct-home media route'
+  homelab.home_edge.caddy .request homelab.services.media_apps.shelfmark 'internal and tunneled route'
+  homelab.home_edge.caddy .request homelab.services.media_apps.seerr 'internal and tunneled route'
+  homelab.home_edge.caddy .request homelab.services.media_apps.radarr 'internal and tunneled route'
+  homelab.home_edge.caddy .request homelab.services.media_apps.sonarr 'internal and tunneled route'
+  homelab.home_edge.caddy .request homelab.services.media_apps.prowlarr 'internal and tunneled route'
+  homelab.home_edge.caddy .request homelab.services.download_apps.transmission 'internal and tunneled route'
+  homelab.home_edge.caddy .request homelab.services.information_apps.miniflux 'internal and tunneled route'
+  homelab.remote.pangolin .request homelab.remote.beszel 'routes the VPS-local dashboard'
+
+  matrix_federation .request homelab.remote.traefik 'connects to matrix.homelab.example'
+  homelab.remote.traefik .request homelab.services.communication_apps.tuwunel 'routes Matrix client and federation traffic'
+  homelab.remote.traefik .request homelab.services.communication_apps.matrix_rtc 'routes MatrixRTC signaling'
+  homelab.services.information_apps.miniflux .data homelab.services.information_apps.miniflux_db 'stores feeds and users'
+  homelab.services.information_apps.miniflux_mcp .data homelab.services.information_apps.miniflux 'uses the Miniflux API'
+  homelab.services.information_apps.openai_tunnel .tunnel openai 'connects outbound'
+
+  homelab.operations.beszel_agents .telemetry homelab.remote.beszel 'WebSocket agent connection'
+  homelab.remote.vps_crowdsec .alert homelab.services.communication_apps.matrix_bridge 'new local decisions only'
+  homelab.home_edge.home_crowdsec .alert homelab.services.communication_apps.matrix_bridge 'new local decisions only'
+  homelab.remote.vps_crowdsec .protects homelab.remote.traefik 'enforces with Traefik and nftables bouncers'
+  homelab.home_edge.home_crowdsec .protects homelab.home_edge.caddy 'blocks hostile clients with nftables'
+  homelab.remote.beszel .alert homelab.services.communication_apps.matrix_bridge 'concise down and recovery alerts'
+  upstream_projects .data homelab.operations.update_monitor 'release and vulnerability metadata'
+  homelab.operations.update_monitor .alert homelab.services.communication_apps.matrix_bridge 'new release or fixable serious CVE'
+  homelab.services.communication_apps.matrix_bridge .request homelab.services.communication_apps.tuwunel 'routes health, security, release, and CVE notices to separate rooms'
+  homelab.operations.plan_runner .manages homelab.home_edge 'applies network and edge configuration'
+  homelab.operations.plan_runner .manages homelab.services 'applies service configuration'
+}

@@ -1,0 +1,14 @@
+---
+# Match the Debian 13 dependencies of the pinned Actions runner v2.337.0.
+# Never execute the dependency installer from the runner-writable installation.
+- name: Install Actions runner dependencies from signed Debian packages
+  ansible.builtin.apt:
+    name:
+      - libicu76
+      - libkrb5-3
+      - liblttng-ust1t64
+      - libssl3t64
+      - zlib1g
+    state: present
+    update_cache: true
+    cache_valid_time: 3600

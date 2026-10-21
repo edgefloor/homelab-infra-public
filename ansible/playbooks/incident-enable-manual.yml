@@ -1,0 +1,56 @@
+---
+- name: Require a quiet, covered incident inventory before manual execution
+  hosts: incident_servers
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Verify the queue is empty and every enrolled source has current evidence
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json, sqlite3, time
+            with sqlite3.connect('file:/var/lib/homelab-incidents/incidents.db?mode=ro', uri=True) as db:
+                assert db.execute("SELECT count(*) FROM jobs WHERE state IN ('queued','running','deferred')").fetchone()[0] == 0, 'Pending investigations require an explicit activation decision'
+                expected = set(json.loads(db.execute("SELECT value FROM meta WHERE key='expected-sources'").fetchone()[0]))
+                current = {r[0] for r in db.execute('SELECT id FROM sources WHERE observed>=?', (time.time()-36*3600,))}
+                assert expected == current, 'Source evidence is missing or stale'
+                assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+                print('No pending jobs; current accepted snapshots:', len(current))
+      changed_when: false
+      register: manual_preflight
+
+- name: Enable explicit operator investigations with memory isolation intact
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Require the successful central preflight in this playbook run
+      ansible.builtin.assert:
+        that: hostvars[groups['incident_servers'][0]].manual_preflight.rc | default(1) == 0
+    - name: Verify the native tool catalog and memory boundary without a model call
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/lib/zag-ops/zag_ops_worker.py, --self-test]
+      become_user: zag-ops
+      environment:
+        HOME: /var/lib/zag-ops
+        HERMES_HOME: /var/lib/zag-ops/.hermes
+        PYTHONPATH: /usr/local/lib/hermes-agent:/usr/local/lib/zag-ops
+      changed_when: false
+    - name: Enable the manual-request worker
+      ansible.builtin.systemd_service:
+        name: zag-ops-worker.service
+        enabled: true
+        state: started

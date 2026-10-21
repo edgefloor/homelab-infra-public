@@ -1,0 +1,40 @@
+#!/bin/bash
+set -euo pipefail
+
+services=(
+  tuwunel.service
+  crowdsec-matrix-bridge.service
+  homelab-release-monitor.timer
+)
+active_services=()
+for service in "${services[@]}"; do
+  if systemctl is-active --quiet "$service"; then
+    active_services+=("$service")
+  fi
+done
+
+restore_services() {
+  status=$?
+  trap - EXIT
+  if [[ -n "${active_services[*]-}" ]] && ! systemctl start "${active_services[@]}" >/dev/null; then
+    status=1
+  fi
+  exit "$status"
+}
+
+trap restore_services EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [[ -n "${active_services[*]-}" ]]; then
+  systemctl stop "${active_services[@]}"
+fi
+
+timeout --kill-after=30s 10m tar --zstd -C / -cf - \
+  etc/tuwunel \
+  etc/crowdsec-matrix-bridge \
+  etc/matrix-rtc \
+  etc/homelab-update-monitor \
+  opt/matrix-rtc \
+  var/lib/tuwunel \
+  var/lib/homelab-update-monitor

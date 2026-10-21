@@ -1,0 +1,30 @@
+user www-data;
+worker_processes 1;
+pid /run/dependency-track-nginx.pid;
+error_log /var/log/nginx/dependency-track-error.log;
+events { worker_connections 256; }
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    server_tokens off;
+    access_log /var/log/nginx/dependency-track-access.log;
+    server {
+        listen {{ dependency_track_address }}:{{ dependency_track_frontend_port }};
+        server_name {{ dependency_track_url | urlsplit('hostname') }};
+        allow {{ dependency_track_proxy_address }};
+        deny all;
+        root /opt/dependency-track/frontend-current/dist;
+        index index.html;
+        client_max_body_size 100m;
+        location /api/ {
+            proxy_pass http://127.0.0.1:{{ dependency_track_api_port }};
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+            proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+            proxy_read_timeout 300s;
+        }
+        location = /static/config.json { add_header Cache-Control "no-store"; }
+        location / { try_files $uri $uri/ /index.html; }
+    }
+}

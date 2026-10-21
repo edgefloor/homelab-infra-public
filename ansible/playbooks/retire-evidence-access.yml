@@ -1,0 +1,9 @@
+---
+- name: Retire the unused CVE evidence capability from managed hosts
+  hosts: homelab_agent_targets:news_embeddings_servers
+  become: true
+  gather_facts: false
+  serial: 4
+  any_errors_fatal: true
+  roles:
+    - retired_evidence_access

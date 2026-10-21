@@ -1,0 +1,241 @@
+---
+# Current input and control paths used for CVE lifecycle reachability. A complete
+# entry means the repository accounts for the deployment's input classes; it does
+# not claim that every package can process every input.
+schema_version: 1
+
+input_sources:
+  internet-home-edge: {targetable: true, evidence: inventory/routes.yml}
+  internet-pangolin-edge: {targetable: true, evidence: inventory/routes.yml}
+  internet-content: {targetable: true, evidence: application fetch or peer protocol}
+  github-actions: {targetable: true, evidence: ansible/roles/plan_runner/defaults/main.yml}
+  matrix-users: {targetable: true, evidence: apps/tuwunel.yml}
+  lan-clients: {targetable: false, evidence: inventory/routes.yml}
+  local-control: {targetable: false, evidence: systemd and loopback configuration}
+
+applications:
+  dependency-track:
+    complete: true
+    evidence: [apps/dependency-track.yml, ansible/roles/dependency_track/tasks/main.yml, inventory/routes.yml]
+    inputs:
+      - {source: lan-clients, relation: receives_requests_from}
+      - {source: internet-content, relation: parses_content_from}
+      - {source: local-control, relation: receives_timer_events_from}
+  news-embeddings:
+    complete: true
+    evidence: [ansible/roles/news_embeddings/tasks/main.yml, ansible/roles/news_embeddings/templates/news-embeddings.service.j2]
+    inputs:
+      - {application: n8n, relation: receives_requests_from}
+      - {source: local-control, relation: receives_control_from}
+  vulnerability-incidents:
+    complete: true
+    evidence: [ansible/roles/vulnerability_incidents/templates/homelab-incidents.service.j2, ansible/roles/vulnerability_incidents/templates/homelab-incidents-reverse-tunnel.service.j2]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: local-control, relation: receives_timer_events_from}
+  beszel:
+    complete: true
+    evidence: [apps/beszel.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: local-control, relation: receives_telemetry_from}
+  caddy:
+    complete: true
+    evidence: [apps/caddy.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-home-edge, relation: receives_requests_from}
+      - {source: lan-clients, relation: receives_requests_from}
+  coredns:
+    complete: true
+    evidence: [apps/coredns.yml, inventory/routes.yml, ansible/roles/coredns/templates/Corefile.j2, ansible/roles/coredns/defaults/main.yml]
+    inputs:
+      - {source: lan-clients, relation: serves_queries_from}
+      - {source: internet-content, relation: parses_content_from}
+  crowdsec:
+    complete: true
+    evidence: [apps/crowdsec.yml]
+    inputs:
+      - {application: caddy, relation: consumes_logs_from}
+      - {application: pangolin, relation: consumes_logs_from}
+  filebrowser:
+    complete: true
+    evidence: [apps/filebrowser.yml, inventory/routes.yml]
+    inputs:
+      - {source: lan-clients, relation: receives_requests_from}
+  jellyfin:
+    complete: true
+    evidence: [apps/jellyfin.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-home-edge, relation: receives_requests_from}
+      - {application: transmission, relation: consumes_files_from}
+  matrix-rtc:
+    complete: true
+    evidence: [apps/matrix-rtc.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {application: tuwunel, relation: receives_authorization_from}
+  miniflux-mcp:
+    complete: true
+    evidence: [apps/miniflux-mcp.yml, ansible/roles/miniflux/templates/tunnel-client.service.j2]
+    inputs:
+      - {application: openai-tunnel-client, relation: receives_requests_from}
+  miniflux:
+    complete: true
+    evidence: [apps/miniflux.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: internet-content, relation: parses_content_from}
+  nerocd:
+    complete: true
+    evidence: [apps/nerocd.yml, inventory/routes.yml]
+    inputs:
+      - {source: lan-clients, relation: receives_requests_from}
+  n8n:
+    complete: true
+    evidence: [apps/n8n.yml, inventory/routes.yml, ansible/roles/n8n/templates/n8n.env.j2]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: lan-clients, relation: receives_requests_from}
+      - {source: internet-content, relation: parses_content_from}
+      - {source: local-control, relation: receives_timer_events_from}
+  newt:
+    complete: true
+    evidence: [apps/newt.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: transports_requests_from}
+  openai-tunnel-client:
+    complete: true
+    evidence: [apps/openai-tunnel-client.yml, ansible/roles/miniflux/templates/tunnel-client.service.j2]
+    inputs:
+      - {source: internet-content, relation: receives_control_from}
+  pangolin:
+    complete: true
+    evidence: [apps/pangolin.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+  pocket-id:
+    complete: true
+    evidence: [apps/pocket-id.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-home-edge, relation: receives_requests_from}
+  prowlarr:
+    complete: true
+    evidence: [apps/prowlarr.yml, inventory/routes.yml, inventory/workloads.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: internet-content, relation: parses_content_from}
+  radarr:
+    complete: true
+    evidence: [apps/radarr.yml, inventory/routes.yml, inventory/workloads.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {application: prowlarr, relation: consumes_index_data_from}
+      - {application: transmission, relation: consumes_files_from}
+  seerr:
+    complete: true
+    evidence: [apps/seerr.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+  shelfmark:
+    complete: true
+    evidence: [apps/shelfmark.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: internet-content, relation: parses_content_from}
+  sonarr:
+    complete: true
+    evidence: [apps/sonarr.yml, inventory/routes.yml, inventory/workloads.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {application: prowlarr, relation: consumes_index_data_from}
+      - {application: transmission, relation: consumes_files_from}
+  transmission:
+    complete: true
+    evidence: [apps/transmission.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: internet-content, relation: receives_peer_data_from}
+  tuwunel:
+    complete: true
+    evidence: [apps/tuwunel.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: matrix-users, relation: receives_messages_from}
+
+  helix-cve:
+    complete: true
+    evidence: [ansible/roles/cve_helix/templates/helix-cve.service.j2]
+    inputs:
+      - {source: local-control, relation: receives_graph_updates_from}
+      - {application: vulnerability-incidents, relation: receives_graph_updates_from}
+  next-plaid:
+    complete: false
+    evidence: [docs/current-deployments.md]
+    inputs:
+      - {source: lan-clients, relation: receives_requests_from}
+  firecrawl:
+    complete: true
+    evidence: [apps/firecrawl.yml, ansible/roles/firecrawl/templates/docker-compose.override.yml.j2]
+    inputs:
+      - {source: lan-clients, relation: receives_requests_from}
+      - {source: internet-content, relation: parses_content_from}
+      - {application: searxng, relation: consumes_index_data_from}
+  searxng:
+    complete: true
+    evidence: [apps/searxng.yml, ansible/roles/firecrawl/templates/docker-compose.override.yml.j2]
+    inputs:
+      - {source: lan-clients, relation: receives_requests_from}
+      - {source: internet-content, relation: parses_content_from}
+  eu-law-postgresql:
+    complete: true
+    evidence: [docs/current-deployments.md]
+    inputs:
+      - {source: lan-clients, relation: receives_database_queries_from}
+  miniflux-postgresql:
+    complete: true
+    evidence: [apps/miniflux.yml]
+    inputs:
+      - {application: miniflux, relation: stores_for}
+  nerocd-postgresql:
+    complete: true
+    evidence: [apps/nerocd.yml]
+    inputs:
+      - {application: nerocd, relation: stores_for}
+  plan-runner:
+    complete: true
+    evidence: [ansible/roles/plan_runner/defaults/main.yml, docs/current-deployments.md]
+    inputs:
+      - {source: github-actions, relation: receives_jobs_from}
+      - {application: tuwunel, relation: receives_backups_from}
+  diagnostic-agent:
+    complete: true
+    evidence: [ansible/playbooks/zig.yml, docs/zig.md]
+    inputs:
+      - {source: matrix-users, relation: receives_messages_from}
+  beszel-agents:
+    complete: true
+    evidence: [apps/beszel.yml, ansible/inventory/hosts.yml]
+    inputs:
+      - {application: beszel, relation: receives_control_from}
+  matrix-alert-bridge:
+    complete: true
+    evidence: [apps/tuwunel.yml, apps/crowdsec.yml]
+    inputs:
+      - {application: crowdsec, relation: receives_events_from}
+  coredns-ddns:
+    complete: true
+    evidence: [apps/coredns.yml, inventory/routes.yml, ansible/roles/cloudflare_ddns/templates/cloudflare-ddns.py.j2, ansible/roles/cloudflare_ddns/defaults/main.yml]
+    inputs:
+      - {source: local-control, relation: receives_timer_events_from}
+      - {source: internet-content, relation: parses_content_from}
+  hypervisor:
+    complete: true
+    evidence: [inventory/workloads.yml, inventory/routes.yml]
+    inputs:
+      - {source: internet-pangolin-edge, relation: receives_requests_from}
+      - {source: lan-clients, relation: receives_control_from}
+  defensive-monitor:
+    complete: true
+    evidence: [ansible/roles/update_monitor/tasks/main.yml]
+    inputs:
+      - {source: local-control, relation: receives_timer_events_from}

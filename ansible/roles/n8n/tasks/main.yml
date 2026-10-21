@@ -1,0 +1,271 @@
+---
+- name: Install native n8n prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, build-essential, python3, xz-utils]
+    state: present
+    update_cache: true
+
+- name: Create the n8n service account
+  ansible.builtin.user:
+    name: n8n
+    home: /var/lib/n8n
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: true
+
+- name: Create the isolated n8n dependency build account
+  ansible.builtin.user:
+    name: n8n-build
+    home: /var/cache/n8n-build
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: true
+
+- name: Identify the immutable n8n release
+  ansible.builtin.set_fact:
+    n8n_release_lock_sha256: "{{ lookup('ansible.builtin.file', role_path ~ '/files/' ~ n8n_version ~ '/package-lock.json', rstrip=false) | hash('sha256') }}"
+    n8n_release_manifest_sha256: "{{ lookup('ansible.builtin.file', role_path ~ '/files/' ~ n8n_version ~ '/package.json', rstrip=false) | hash('sha256') }}"
+
+- name: Select a directory unique to the release and dependency lock
+  ansible.builtin.set_fact:
+    n8n_release_path: "/opt/n8n/releases/{{ n8n_version }}-{{ n8n_release_lock_sha256[:16] }}"
+
+- name: Check whether the immutable release is already installed
+  ansible.builtin.stat:
+    path: "{{ n8n_release_path }}/.installed"
+  register: n8n_release_marker
+
+- name: Inspect the release directory and current symlink
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: ["{{ n8n_release_path }}", /opt/n8n/current]
+  register: n8n_release_directories
+
+- name: Refuse to rebuild a selected or redirected release directory
+  ansible.builtin.assert:
+    that:
+      - not (n8n_release_directories.results[0].stat.islnk | default(false))
+      - n8n_release_marker.stat.exists or n8n_release_directories.results[1].stat.lnk_source | default('') != n8n_release_path
+    fail_msg: An incomplete release must be inactive and must not redirect outside its build directory.
+
+- name: Require a root-owned installation receipt
+  ansible.builtin.assert:
+    that:
+      - n8n_release_directories.results[0].stat.isdir | default(false)
+      - n8n_release_directories.results[0].stat.uid == 0
+      - n8n_release_directories.results[0].stat.mode == '0755'
+      - n8n_release_marker.stat.isreg | default(false)
+      - not (n8n_release_marker.stat.islnk | default(false))
+      - n8n_release_marker.stat.uid == 0
+      - n8n_release_marker.stat.mode == '0644'
+    fail_msg: The existing installation receipt is not owned and protected by root.
+  when: n8n_release_marker.stat.exists
+
+- name: Read the completed installation receipt
+  ansible.builtin.slurp:
+    src: "{{ n8n_release_path }}/.installed"
+  register: n8n_release_receipt
+  when: n8n_release_marker.stat.exists
+
+- name: Require a matching installation receipt
+  ansible.builtin.assert:
+    that:
+      - (n8n_release_receipt.content | b64decode) == (n8n_version ~ ' ' ~ n8n_release_lock_sha256 ~ '\n')
+    fail_msg: The existing installation receipt belongs to a different release.
+  when: n8n_release_marker.stat.exists
+
+- name: Check existing immutable release inputs
+  ansible.builtin.stat:
+    path: "{{ n8n_release_path }}/{{ item }}"
+    checksum_algorithm: sha256
+  loop: [package.json, package-lock.json]
+  register: n8n_existing_inputs
+  when: n8n_release_marker.stat.exists
+
+- name: Reject mutation of an installed release
+  ansible.builtin.assert:
+    that:
+      - n8n_existing_inputs.results[0].stat.checksum | default('') == n8n_release_manifest_sha256
+      - n8n_existing_inputs.results[1].stat.checksum | default('') == n8n_release_lock_sha256
+    fail_msg: An installed release differs from its committed inputs. Preserve it for investigation and use a new dependency lock.
+  when: n8n_release_marker.stat.exists
+
+- name: Create n8n directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /var/lib/n8n, owner: n8n, group: n8n, mode: '0700' }
+    - { path: /etc/n8n, owner: root, group: n8n, mode: '0750' }
+    - { path: /opt/n8n, owner: root, group: root, mode: '0755' }
+    - { path: /opt/n8n/releases, owner: root, group: root, mode: '0755' }
+    - { path: /var/cache/n8n-build, owner: n8n-build, group: n8n-build, mode: '0700' }
+    - { path: /var/cache/homelab-tools, owner: root, group: root, mode: '0755' }
+
+- name: Prepare an unprivileged build directory for a new release
+  ansible.builtin.file:
+    path: "{{ n8n_release_path }}"
+    state: directory
+    owner: n8n-build
+    group: n8n-build
+    mode: 'u=rwX,go=rX'
+    recurse: true
+    follow: false
+  when: not n8n_release_marker.stat.exists
+
+- name: Download the checksum-pinned Node.js runtime
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ n8n_node_version }}/node-v{{ n8n_node_version }}-linux-x64.tar.xz"
+    dest: "/var/cache/homelab-tools/node-v{{ n8n_node_version }}-linux-x64.tar.xz"
+    checksum: "sha256:{{ n8n_node_sha256 }}"
+    mode: '0644'
+
+- name: Extract Node.js
+  ansible.builtin.unarchive:
+    src: "/var/cache/homelab-tools/node-v{{ n8n_node_version }}-linux-x64.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/node-v{{ n8n_node_version }}-linux-x64/bin/node"
+
+- name: Declare the pinned official n8n package
+  ansible.builtin.copy:
+    src: "{{ n8n_version }}/package.json"
+    dest: "{{ n8n_release_path }}/package.json"
+    owner: n8n-build
+    group: n8n-build
+    mode: '0644'
+  when: not n8n_release_marker.stat.exists
+
+- name: Install the resolved dependency integrity lock
+  ansible.builtin.copy:
+    src: "{{ n8n_version }}/package-lock.json"
+    dest: "{{ n8n_release_path }}/package-lock.json"
+    owner: n8n-build
+    group: n8n-build
+    mode: '0644'
+  when: not n8n_release_marker.stat.exists
+
+- name: Install the official n8n release from the integrity lock
+  ansible.builtin.command:
+    argv: ["/opt/node-v{{ n8n_node_version }}-linux-x64/bin/npm", ci, --omit=dev, --no-audit, --no-fund]
+    chdir: "{{ n8n_release_path }}"
+    creates: "{{ n8n_release_path }}/.installed"
+  become_user: n8n-build
+  environment:
+    PATH: "/opt/node-v{{ n8n_node_version }}-linux-x64/bin:/usr/local/bin:/usr/bin:/bin"
+    npm_config_cache: /var/cache/n8n-build/npm
+    npm_config_userconfig: /dev/null
+    npm_config_registry: https://registry.npmjs.org
+
+- name: Verify the installed n8n package version
+  ansible.builtin.command:
+    argv: ["/opt/node-v{{ n8n_node_version }}-linux-x64/bin/node", -p, "require('./node_modules/n8n/package.json').version"]
+    chdir: "{{ n8n_release_path }}"
+  register: n8n_installed_version
+  changed_when: false
+  failed_when: n8n_installed_version.stdout != n8n_version
+
+- name: Verify installation preserved the committed release inputs
+  ansible.builtin.stat:
+    path: "{{ n8n_release_path }}/{{ item }}"
+    checksum_algorithm: sha256
+  loop: [package.json, package-lock.json]
+  register: n8n_completed_inputs
+
+- name: Require exact committed inputs before selecting a release
+  ansible.builtin.assert:
+    that:
+      - n8n_completed_inputs.results[0].stat.checksum | default('') == n8n_release_manifest_sha256
+      - n8n_completed_inputs.results[1].stat.checksum | default('') == n8n_release_lock_sha256
+    fail_msg: The dependency installation changed its inputs. The running release has not been selected or restarted.
+
+- name: Make a completed release read-only to service and build accounts
+  ansible.builtin.file:
+    path: "{{ n8n_release_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 'u=rwX,go=rX'
+    recurse: true
+    follow: false
+  when: not n8n_release_marker.stat.exists
+
+- name: Record successful release installation
+  ansible.builtin.copy:
+    content: "{{ n8n_version }} {{ n8n_release_lock_sha256 }}\n"
+    dest: "{{ n8n_release_path }}/.installed"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Activate the verified n8n release
+  when: n8n_activate_release | bool
+  block:
+    - name: Select the current n8n release
+      ansible.builtin.file:
+        src: "{{ n8n_release_path }}"
+        dest: /opt/n8n/current
+        state: link
+        force: true
+      notify: Restart n8n
+
+    - name: Select the canonical n8n authentication route
+      ansible.builtin.set_fact:
+        n8n_auth_proxy_route: "{{ homelab_routing.routes | selectattr('id', 'equalto', 'n8n') | first }}"
+
+    - name: Install the Pangolin session hook
+      ansible.builtin.copy:
+        src: pangolin-auth.js
+        dest: /etc/n8n/pangolin-auth.js
+        owner: root
+        group: n8n
+        mode: '0640'
+      notify: Restart n8n
+
+    - name: Install the Pangolin account binding
+      ansible.builtin.template:
+        src: pangolin-auth.json.j2
+        dest: /etc/n8n/pangolin-auth.json
+        owner: root
+        group: n8n
+        mode: '0640'
+      notify: Restart n8n
+
+    - name: Install the n8n environment
+      ansible.builtin.template:
+        src: n8n.env.j2
+        dest: /etc/n8n/n8n.env
+        owner: root
+        group: n8n
+        mode: '0640'
+      notify: Restart n8n
+
+    - name: Install the n8n service
+      ansible.builtin.template:
+        src: n8n.service.j2
+        dest: /etc/systemd/system/n8n.service
+        mode: '0644'
+      notify: Restart n8n
+
+    - name: Apply n8n changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start n8n
+      ansible.builtin.systemd_service:
+        name: n8n.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Check n8n readiness
+      ansible.builtin.uri:
+        url: "http://{{ n8n_address }}:{{ n8n_port }}/healthz/readiness"
+        status_code: 200
+      register: n8n_health
+      retries: 30
+      delay: 2
+      until: n8n_health.status == 200

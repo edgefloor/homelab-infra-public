@@ -1,0 +1,39 @@
+---
+- name: Require the canonical routing inventory
+  ansible.builtin.assert:
+    that:
+      - homelab_routing.schema_version == 1
+      - homelab_routing.routes | length > 0
+    fail_msg: inventory/routes.yml must define the version 1 routing inventory
+
+- name: Initialize managed Cloudflare routes
+  ansible.builtin.set_fact:
+    cloudflare_managed_routes: []
+
+- name: Derive managed Cloudflare routes from the canonical inventory
+  ansible.builtin.set_fact:
+    cloudflare_managed_routes: >-
+      {{
+        cloudflare_managed_routes +
+        [{
+          'name': item.hostname,
+          'target': item.public_target,
+          'verification_name': item.hostname
+        }]
+      }}
+  loop: "{{ homelab_routing.routes }}"
+  loop_control:
+    label: "{{ item.hostname }} -> {{ item.public_target }}"
+  when: item.public_target != 'internal_only'
+
+- name: Add the on-demand exposure wildcard to Cloudflare
+  ansible.builtin.set_fact:
+    cloudflare_managed_routes: >-
+      {{
+        cloudflare_managed_routes +
+        [{
+          'name': homelab_routing.on_demand_exposure.hostname,
+          'target': homelab_routing.on_demand_exposure.public_target,
+          'verification_name': 'on-demand-probe.' + homelab_routing.base_domain
+        }]
+      }}

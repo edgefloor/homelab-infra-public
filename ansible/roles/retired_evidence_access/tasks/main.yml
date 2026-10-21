@@ -1,0 +1,36 @@
+---
+- name: Install the scoped evidence retirement utility
+  ansible.builtin.copy:
+    src: retire_evidence_access.py
+    dest: /usr/local/sbin/retire-homelab-evidence-access
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Revoke installed evidence credentials and commands while retaining recovery copies
+  ansible.builtin.command:
+    argv: >-
+      {{ ['/usr/local/sbin/retire-homelab-evidence-access'] +
+         (['--controller'] if inventory_hostname in groups.get('hermes_agents', []) else []) }}
+  register: evidence_retirement
+  changed_when: (evidence_retirement.stdout | from_json).changed
+
+- name: Find the dedicated retired endpoint account without creating it
+  ansible.builtin.getent:
+    database: passwd
+    key: homelab-agent
+    fail_key: false
+
+- name: Lock the retired endpoint account and remove journal membership
+  ansible.builtin.user:
+    name: homelab-agent
+    password_lock: true
+    shell: /usr/sbin/nologin
+    groups: ''
+    append: false
+  when: ansible_facts.getent_passwd['homelab-agent'] is not none
+
+- name: Validate remaining sudo policy after removing the dedicated capability
+  ansible.builtin.command:
+    argv: [/usr/sbin/visudo, -cf, /etc/sudoers]
+  changed_when: false

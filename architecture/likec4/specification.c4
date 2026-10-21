@@ -1,0 +1,262 @@
+specification {
+  color homeBlue #2563EB
+  color edgeViolet #7C3AED
+  color identityGreen rgb(5 150 105)
+  color networkCyan rgb(8 145 178)
+  color operationsAmber #D97706
+  color securityRose #E11D48
+  color dataSlate #475569
+
+  element person {
+    notation 'Person'
+    style {
+      shape person
+      color amber
+      icon bootstrap:person
+    }
+  }
+
+  element client {
+    notation 'Client'
+    style {
+      shape browser
+      color gray
+    }
+  }
+
+  element externalSystem {
+    notation 'External service'
+    style {
+      color muted
+      icon bootstrap:globe2
+    }
+  }
+
+  element estate {
+    notation 'Personal infrastructure'
+    style {
+      color dataSlate
+      icon bootstrap:houses
+    }
+  }
+
+  element domain {
+    notation 'Responsibility boundary'
+    style {
+      color gray
+      icon bootstrap:diagram-3
+    }
+  }
+
+  element edgeService {
+    notation 'Edge service'
+    style {
+      color edgeViolet
+      icon bootstrap:shield-lock
+    }
+  }
+
+  element networkService {
+    notation 'Network service'
+    style {
+      color networkCyan
+      icon bootstrap:diagram-3
+    }
+  }
+
+  element identityProvider {
+    notation 'Identity provider'
+    style {
+      color identityGreen
+      icon bootstrap:person-badge
+    }
+  }
+
+  element accessPolicy {
+    notation 'Access policy'
+    style {
+      shape document
+      color identityGreen
+      icon bootstrap:key
+    }
+  }
+
+  element application {
+    notation 'Application'
+    style {
+      color homeBlue
+      icon bootstrap:window
+    }
+  }
+
+  element protocolService {
+    notation 'Protocol service'
+    style {
+      color indigo
+      icon bootstrap:broadcast
+    }
+  }
+
+  element dataStore {
+    notation 'Data store'
+    style {
+      shape cylinder
+      color dataSlate
+      icon bootstrap:database
+    }
+  }
+
+  element monitoringService {
+    notation 'Monitoring'
+    style {
+      color operationsAmber
+      icon bootstrap:activity
+    }
+  }
+
+  element securityService {
+    notation 'Security enforcement'
+    style {
+      color securityRose
+      icon bootstrap:shield-fill-exclamation
+    }
+  }
+
+  element automationService {
+    notation 'Automation'
+    style {
+      shape component
+      color operationsAmber
+      icon bootstrap:gear-wide-connected
+    }
+  }
+
+  relationship request {
+    notation 'HTTPS / application traffic'
+    color homeBlue
+  }
+
+  relationship dns {
+    notation 'DNS resolution'
+    line dotted
+    color networkCyan
+  }
+
+  relationship tunnel {
+    notation 'Outbound encrypted tunnel'
+    line dashed
+    color edgeViolet
+  }
+
+  relationship oidc {
+    notation 'OIDC'
+    line dashed
+    color identityGreen
+  }
+
+  relationship identityHeader {
+    notation 'Trusted identity header'
+    line dashed
+    color identityGreen
+  }
+
+  relationship authorizes {
+    notation 'Role / group policy'
+    line dotted
+    color identityGreen
+  }
+
+  relationship telemetry {
+    notation 'Outbound telemetry'
+    line dotted
+    color operationsAmber
+  }
+
+  relationship alert {
+    notation 'Actionable notification'
+    line dotted
+    color securityRose
+  }
+
+  relationship manages {
+    notation 'Configuration management'
+    line dashed
+    color operationsAmber
+  }
+
+  relationship protects {
+    notation 'Edge protection'
+    line dashed
+    color securityRose
+  }
+
+  relationship data {
+    notation 'Application data'
+    color dataSlate
+  }
+
+  deploymentNode environment {
+    style {
+      color dataSlate
+      icon bootstrap:globe2
+    }
+  }
+
+  deploymentNode location {
+    style {
+      color gray
+      icon bootstrap:geo-alt
+    }
+  }
+
+  deploymentNode server {
+    notation 'Physical / virtual server'
+    style {
+      color homeBlue
+      multiple true
+    }
+  }
+
+  deploymentNode hypervisor {
+    notation 'Hypervisor'
+    style {
+      color operationsAmber
+      icon bootstrap:cpu
+    }
+  }
+
+  deploymentNode serviceGroup {
+    notation 'Visual service group'
+    style {
+      color gray
+      icon bootstrap:grid-1x2-fill
+    }
+  }
+
+  deploymentNode lxc {
+    notation 'Unprivileged LXC'
+    technology 'Debian 13'
+    style {
+      color networkCyan
+      multiple true
+      icon tech:debian
+    }
+  }
+
+  deploymentNode compose {
+    notation 'Docker Compose'
+    style {
+      color edgeViolet
+      multiple true
+      icon tech:docker
+    }
+  }
+
+  deploymentNode appliance {
+    notation 'Network appliance'
+    style {
+      color gray
+      icon bootstrap:router
+    }
+  }
+}

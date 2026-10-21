@@ -1,0 +1,9 @@
+---
+- name: Configure the Beszel monitoring hub
+  hosts: remote_platform
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [beszel_hub]
+        cve_provisioning_installations: ["deployment:beszel"]

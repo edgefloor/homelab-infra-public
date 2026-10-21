@@ -1,0 +1,20 @@
+---
+schema_version: 1
+id: shelfmark
+name: Shelfmark
+upstream:
+  repository: https://github.com/calibrain/shelfmark
+  release: v1.3.15
+  commit: 9452ebc70d64f7897d24aa92a8453ac35e4dc537
+  distribution: source_build
+runtime: native_systemd
+environments:
+  staging: { target: media-automation, status: migrated_and_validated }
+  production: { target: media-automation, status: active_lan_via_caddy_remote_via_pangolin }
+routing: { caddy: lan, pangolin: remote }
+health:
+  local_url: http://127.0.0.1:8084/api/health
+  expected_units: [shelfmark.service]
+state:
+  paths: [/etc/shelfmark, /opt/shelfmark-releases]
+  backup_required_before_cutover: true

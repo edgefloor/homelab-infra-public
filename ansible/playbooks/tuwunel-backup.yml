@@ -1,0 +1,28 @@
+---
+- name: Prepare the home Tuwunel backup receiver
+  hosts: plan-runner
+  become: true
+  vars:
+    tuwunel_backup_mode: receiver_prepare
+  roles:
+    - tuwunel_backup
+
+- name: Authorize the bounded Tuwunel backup export
+  hosts: tuwunel_servers
+  become: true
+  vars:
+    tuwunel_backup_mode: source
+    tuwunel_backup_receiver_public_key: >-
+      {{ hostvars['plan-runner']['tuwunel_backup_receiver_public_key'] }}
+  roles:
+    - tuwunel_backup
+
+- name: Schedule and verify the encrypted home copy
+  hosts: plan-runner
+  become: true
+  vars:
+    tuwunel_backup_mode: receiver_install
+    tuwunel_backup_source_host_key: >-
+      {{ hostvars['pangolin']['tuwunel_backup_source_host_key'] }}
+  roles:
+    - tuwunel_backup

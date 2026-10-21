@@ -1,0 +1,30 @@
+#!/bin/bash
+set -euo pipefail
+
+helix_sync_timer_was_active=false
+if systemctl is-active --quiet homelab-incidents-helix-sync.timer; then
+  helix_sync_timer_was_active=true
+fi
+
+restore_incidents() {
+  local restore_failed=0
+  systemctl start homelab-incidents.service homelab-incidents-reverse-tunnel.service \
+    homelab-incidents-aliases.timer >/dev/null || restore_failed=1
+  if [[ "$helix_sync_timer_was_active" == true ]]; then
+    systemctl start homelab-incidents-helix-sync.timer >/dev/null || restore_failed=1
+  fi
+  return "$restore_failed"
+}
+trap restore_incidents EXIT
+trap 'exit 1' HUP INT TERM
+systemctl stop homelab-incidents-aliases.timer homelab-incidents-aliases.service \
+  homelab-incidents-helix-sync.timer homelab-incidents-helix-sync.service \
+  homelab-incidents.service 2>/dev/null || true
+
+incident_files=(incidents.db)
+for candidate in incidents.db-wal incidents.db-shm; do
+  [[ ! -e "/var/lib/homelab-incidents/$candidate" ]] || incident_files+=("$candidate")
+done
+tar --create --zstd --file=- \
+  --directory=/var/lib/homelab-incidents "${incident_files[@]}" \
+  --directory=/ etc/homelab-incidents

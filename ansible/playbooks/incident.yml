@@ -1,0 +1,153 @@
+---
+- name: Configure the internal vulnerability incident service
+  hosts: incident_servers
+  become: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  roles:
+    - common_baseline
+    - vulnerability_incidents
+  post_tasks:
+    - name: Create the reverse tunnel account
+      ansible.builtin.user:
+        name: incident-tunnel
+        system: true
+        home: /var/lib/incident-tunnel
+        create_home: true
+        shell: /usr/sbin/nologin
+
+    - name: Generate the dedicated reverse tunnel key
+      ansible.builtin.command:
+        argv: [ssh-keygen, -q, -t, ed25519, -N, '', -C, incident-api-reverse-tunnel, -f, /var/lib/incident-tunnel/id_ed25519]
+        creates: /var/lib/incident-tunnel/id_ed25519
+
+    - name: Protect the reverse tunnel key
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: incident-tunnel
+        group: incident-tunnel
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /var/lib/incident-tunnel/id_ed25519, mode: '0600'}
+        - {path: /var/lib/incident-tunnel/id_ed25519.pub, mode: '0644'}
+
+    - name: Read the reverse tunnel public key
+      ansible.builtin.slurp:
+        src: /var/lib/incident-tunnel/id_ed25519.pub
+      register: incident_tunnel_public_key_file
+
+    - name: Retain the reverse tunnel public key
+      ansible.builtin.set_fact:
+        incident_tunnel_public_key: "{{ incident_tunnel_public_key_file.content | b64decode | trim }}"
+
+- name: Configure the stateless Pangolin forward
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Create the locked forwarding account
+      ansible.builtin.user:
+        name: incident-forward
+        system: true
+        home: /var/lib/incident-forward
+        create_home: true
+        shell: /bin/false
+        password_lock: true
+
+    - name: Create the forwarding SSH directory
+      ansible.builtin.file:
+        path: /var/lib/incident-forward/.ssh
+        state: directory
+        owner: incident-forward
+        group: incident-forward
+        mode: '0700'
+
+    - name: Authorize only the loopback listener
+      ansible.builtin.copy:
+        content: >-
+          no-agent-forwarding,no-X11-forwarding,no-pty,permitlisten="127.0.0.1:8790"
+          {{ hostvars[groups['incident_servers'][0]].incident_tunnel_public_key }}
+        dest: /var/lib/incident-forward/.ssh/authorized_keys
+        owner: incident-forward
+        group: incident-forward
+        mode: '0600'
+
+    - name: Read the Pangolin SSH host identity
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: incident_edge_host_key_file
+
+    - name: Retain the Pangolin SSH host identity
+      ansible.builtin.set_fact:
+        incident_edge_host_key: "{{ incident_edge_host_key_file.content | b64decode | trim }}"
+
+- name: Maintain the replacement reverse tunnel
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Pin the Pangolin SSH host identity
+      ansible.builtin.copy:
+        content: "198.51.100.24 {{ hostvars[groups['tuwunel_servers'][0]].incident_edge_host_key }}\n"
+        dest: /var/lib/incident-tunnel/known_hosts
+        owner: incident-tunnel
+        group: incident-tunnel
+        mode: '0600'
+      register: incident_edge_known_host
+
+    - name: Install the reverse tunnel service
+      ansible.builtin.template:
+        src: ../roles/vulnerability_incidents/templates/homelab-incidents-reverse-tunnel.service.j2
+        dest: /etc/systemd/system/homelab-incidents-reverse-tunnel.service
+        mode: '0644'
+      register: incident_reverse_tunnel_unit
+
+    - name: Start the reverse tunnel
+      ansible.builtin.systemd_service:
+        name: homelab-incidents-reverse-tunnel.service
+        enabled: true
+        state: "{{ 'restarted' if incident_edge_known_host.changed or incident_reverse_tunnel_unit.changed else 'started' }}"
+        daemon_reload: true
+
+- name: Verify the stateless edge path
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Require the incident API through the loopback forward
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8790/healthz
+      register: incident_edge_health
+      until: incident_edge_health.status == 200
+      retries: 10
+      delay: 2
+
+- name: Include the incident guest in the managed ZFS backup job
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  roles:
+    - managed_backup_membership

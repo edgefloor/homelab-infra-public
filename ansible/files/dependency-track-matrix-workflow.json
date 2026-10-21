@@ -1,0 +1,122 @@
+{
+  "id": "homelabDTrackDaily",
+  "name": "Dependency-Track daily summary to Matrix",
+  "active": false,
+  "nodes": [
+    {
+      "id": "7ac32fde-a8cc-4a64-9e8f-f9ac90107d23",
+      "name": "Dependency-Track webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "554f8c23-d6ac-48b1-a86c-4af4d528f898",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dependency-track-daily",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "homelabDTrackHook",
+          "name": "Dependency-Track webhook"
+        }
+      }
+    },
+    {
+      "id": "76dab087-6d6f-439e-ab09-6c761641d353",
+      "name": "High or critical summary",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        250,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dd677219-45bf-4105-96f3-099324cfc77e",
+              "leftValue": "={{ $json.body?.notification?.group === 'GROUP_NEW_VULNERABILITIES_SUMMARY' && (($json.body.notification.subject.overview.newVulnerabilitiesCountBySeverity?.CRITICAL ?? 0) + ($json.body.notification.subject.overview.newVulnerabilitiesCountBySeverity?.HIGH ?? 0) > 0) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "eb54f076-bdf6-4215-b580-71347f6d1dea",
+      "name": "Send Matrix summary",
+      "type": "n8n-nodes-base.matrix",
+      "typeVersion": 1,
+      "position": [
+        500,
+        -100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "create",
+        "roomId": "__MATRIX_ROOM_ID__",
+        "text": "={{ 'Dependency-Track daily vulnerability summary\\nNew unsuppressed findings: ' + ($json.body.notification.subject.overview.newVulnerabilitiesCountBySeverity?.CRITICAL ?? 0) + ' critical, ' + ($json.body.notification.subject.overview.newVulnerabilitiesCountBySeverity?.HIGH ?? 0) + ' high.\\n' + ($json.body.notification.subject.projectSummaries ?? []).filter(p => ((p.newVulnerabilitiesCountBySeverity?.CRITICAL ?? 0) + (p.newVulnerabilitiesCountBySeverity?.HIGH ?? 0)) > 0).slice(0, 25).map(p => p.project.name.slice(0, 120) + ': ' + (p.newVulnerabilitiesCountBySeverity?.CRITICAL ?? 0) + ' critical, ' + (p.newVulnerabilitiesCountBySeverity?.HIGH ?? 0) + ' high').join('\\n') + '\\nDetails and triage: https://vulns.homelab.example' }}",
+        "messageType": "m.notice",
+        "messageFormat": "plain"
+      },
+      "credentials": {
+        "matrixApi": {
+          "id": "homelabDTrackMatrix",
+          "name": "Matrix vulnerability notifications"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Dependency-Track webhook": {
+      "main": [
+        [
+          {
+            "node": "High or critical summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High or critical summary": {
+      "main": [
+        [
+          {
+            "node": "Send Matrix summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Budapest",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": false
+  },
+  "pinData": {}
+}

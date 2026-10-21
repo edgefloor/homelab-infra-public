@@ -1,0 +1,10 @@
+---
+- name: Restart Tuwunel
+  ansible.builtin.systemd_service:
+    name: tuwunel.service
+    state: restarted
+
+- name: Restart CrowdSec Matrix bridge
+  ansible.builtin.systemd_service:
+    name: crowdsec-matrix-bridge.service
+    state: restarted

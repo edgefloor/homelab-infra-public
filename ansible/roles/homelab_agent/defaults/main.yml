@@ -1,0 +1,6 @@
+---
+homelab_agent_user: "{{ homelab_investigation_execution.controller_user }}"
+homelab_agent_group: "{{ homelab_investigation_execution.shared_group }}"
+homelab_agent_state_dir: "{{ homelab_investigation_execution.capability_state }}"
+homelab_agent_ssh_key: "{{ homelab_investigation_execution.observation_key }}"
+homelab_agent_retired_state: /var/backups/hermes-agent/retired-investigator-state

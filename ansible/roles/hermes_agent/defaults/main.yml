@@ -1,0 +1,20 @@
+---
+hermes_agent_version: '2026.9.24'
+hermes_agent_commit: f97608f178d1ffeca59860195ab7da295f7c8e5f
+hermes_agent_installer_url: >-
+  https://raw.githubusercontent.com/NousResearch/hermes-agent/v{{ hermes_agent_version }}/scripts/install.sh
+hermes_agent_installer_sha256: 2017ddf0cc7bc6cfb70d40dc9fba1d916f47dbcccf5fe73bdee2cf93a11262af
+hermes_agent_user: hermes-agent
+hermes_agent_group: hermes-agent
+hermes_agent_home: /var/lib/hermes-agent
+hermes_agent_config_home: "{{ hermes_agent_home }}/.hermes"
+hermes_agent_release_dir: /usr/local/lib/hermes-agent
+hermes_agent_command: /usr/local/bin/hermes
+# Install declared native feature dependencies during provisioning. The service
+# account cannot repair missing packages in the root-owned runtime at startup.
+hermes_agent_required_features: []
+# Optional externally managed general Hermes configuration. Empty values preserve
+# an existing deployment and do not select a provider, model, personality, or tools.
+hermes_agent_config: ''
+hermes_agent_environment: ''
+hermes_agent_auth: ''

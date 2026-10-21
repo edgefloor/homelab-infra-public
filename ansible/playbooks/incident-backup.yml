@@ -1,0 +1,56 @@
+---
+- name: Prepare the encrypted backup receiver
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  roles:
+    - role: incident_backup
+      incident_backup_mode: receiver_prepare
+
+- name: Configure the incident backup source
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  roles:
+    - role: incident_backup
+      incident_backup_mode: incident_source
+      incident_backup_receiver_public_key: "{{ hostvars[groups['plan_runners'][0]].incident_backup_receiver_public_key }}"
+
+- name: Configure the Helix backup source
+  hosts: cve_helix_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  roles:
+    - role: incident_backup
+      incident_backup_mode: helix_source
+      incident_backup_receiver_public_key: "{{ hostvars[groups['plan_runners'][0]].incident_backup_receiver_public_key }}"
+
+- name: Install and exercise the encrypted backup receiver
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  roles:
+    - role: incident_backup
+      incident_backup_mode: receiver_install
+      incident_backup_incident_host_key: "{{ hostvars[groups['incident_servers'][0]].incident_backup_source_host_key }}"
+      incident_backup_helix_host_key: "{{ hostvars[groups['cve_helix_servers'][0]].incident_backup_source_host_key }}"

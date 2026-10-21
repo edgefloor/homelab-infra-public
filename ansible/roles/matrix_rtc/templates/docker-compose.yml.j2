@@ -1,0 +1,44 @@
+name: matrix-rtc
+
+services:
+  jwt:
+    image: {{ matrix_rtc_jwt_image }}
+    container_name: matrix-rtc-jwt
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      LIVEKIT_JWT_BIND: ":{{ matrix_rtc_jwt_port }}"
+      LIVEKIT_URL: "wss://{{ matrix_rtc_hostname }}"
+      LIVEKIT_KEY_FROM_FILE: /run/secrets/livekit-key
+      LIVEKIT_SECRET_FROM_FILE: /run/secrets/livekit-secret
+      LIVEKIT_FULL_ACCESS_HOMESERVERS: "{{ matrix_rtc_full_access_homeservers }}"
+    volumes:
+      - {{ matrix_rtc_credentials_dir }}/livekit-key:/run/secrets/livekit-key:ro
+      - {{ matrix_rtc_credentials_dir }}/livekit-secret:/run/secrets/livekit-secret:ro
+
+  livekit:
+    image: {{ matrix_rtc_livekit_image }}
+    container_name: matrix-rtc-livekit
+    restart: unless-stopped
+    ports:
+      - "{{ matrix_rtc_proxy_gateway }}:{{ matrix_rtc_livekit_port }}:{{ matrix_rtc_livekit_port }}/tcp"
+      - "{{ matrix_rtc_tcp_port }}:{{ matrix_rtc_tcp_port }}/tcp"
+      - "{{ matrix_rtc_udp_port }}:{{ matrix_rtc_udp_port }}/udp"
+      - "{{ matrix_rtc_turn_udp_port }}:{{ matrix_rtc_turn_udp_port }}/udp"
+      - "{{ matrix_rtc_proxy_gateway }}:{{ matrix_rtc_turn_tls_backend_port }}:{{ matrix_rtc_turn_tls_port }}/tcp"
+      - "{{ matrix_rtc_turn_relay_start }}-{{ matrix_rtc_turn_relay_end }}:{{ matrix_rtc_turn_relay_start }}-{{ matrix_rtc_turn_relay_end }}/udp"
+    command:
+      - --config
+      - /etc/livekit.yaml
+      - --key-file
+      - /run/secrets/livekit-keypair
+    volumes:
+      - {{ matrix_rtc_install_dir }}/livekit.yaml:/etc/livekit.yaml:ro
+      - {{ matrix_rtc_credentials_dir }}/livekit-keypair:/run/secrets/livekit-keypair:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      test: ["CMD", "/livekit-server", "ports", "--config", "/etc/livekit.yaml", "--key-file", "/run/secrets/livekit-keypair"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

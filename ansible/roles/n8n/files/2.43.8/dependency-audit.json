@@ -1,0 +1,279 @@
+{
+  "observed_at": "2026-10-20T01:29:24.498976+00:00",
+  "release": "2.43.8",
+  "lock_sha256": "c8d5421f01da578e045310bb210178b0c7ba4f8d8bb88ba865942e54fa67bb15",
+  "scope": "Actual installed production packages matched to the fresh npm advisory feed. Package presence does not establish exploitability; native Dependency-Track also reports Go compiler dependencies, described separately below.",
+  "counts": {
+    "moderate": 12,
+    "low": 2,
+    "critical": 2,
+    "high": 3
+  },
+  "advisories": [
+    {
+      "name": "@langchain/mongodb",
+      "title": "LangChain: MongoDBChatMessageHistory query injection can allow cross-session access",
+      "url": "https://github.com/advisories/GHSA-m6rx-h84q-8r95",
+      "severity": "moderate",
+      "range": "<=1.3.0",
+      "installed": [
+        {
+          "path": "node_modules/@langchain/mongodb",
+          "version": "1.0.1"
+        }
+      ]
+    },
+    {
+      "name": "@langchain/redis",
+      "title": "LangChain: RediSearch Filter Injection via Unescaped Tag/Text Values",
+      "url": "https://github.com/advisories/GHSA-5x6v-p487-7qh2",
+      "severity": "low",
+      "range": "<=1.1.0",
+      "installed": [
+        {
+          "path": "node_modules/@langchain/redis",
+          "version": "1.0.1"
+        }
+      ]
+    },
+    {
+      "name": "@simple-git/argv-parser",
+      "title": "simple-git: `VISUAL` editor environment variable is omitted from unsafe editor detection",
+      "url": "https://github.com/advisories/GHSA-v5rq-49vh-5v5c",
+      "severity": "critical",
+      "range": "<2.0.1",
+      "installed": [
+        {
+          "path": "node_modules/@simple-git/argv-parser",
+          "version": "1.1.1"
+        }
+      ]
+    },
+    {
+      "name": "@tootallnate/once",
+      "title": "@tootallnate/once vulnerable to Incorrect Control Flow Scoping",
+      "url": "https://github.com/advisories/GHSA-vpq2-c234-7xj6",
+      "severity": "low",
+      "range": "<2.0.1",
+      "installed": [
+        {
+          "path": "node_modules/@tootallnate/once",
+          "version": "1.1.2"
+        }
+      ]
+    },
+    {
+      "name": "braces",
+      "title": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+      "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+      "severity": "high",
+      "range": "<=3.0.3",
+      "installed": [
+        {
+          "path": "node_modules/braces",
+          "version": "3.0.3"
+        }
+      ]
+    },
+    {
+      "name": "element-plus",
+      "title": "Element Plus Link component (el-link) implements insufficient input validation for the href attribute",
+      "url": "https://github.com/advisories/GHSA-5m5x-9j46-h678",
+      "severity": "moderate",
+      "range": "<=2.11.0",
+      "installed": [
+        {
+          "path": "node_modules/element-plus",
+          "version": "2.4.3"
+        }
+      ]
+    },
+    {
+      "name": "markdown-it",
+      "title": "markdown-it is has a Regular Expression Denial of Service (ReDoS)",
+      "url": "https://github.com/advisories/GHSA-38c4-r59v-3vqw",
+      "severity": "moderate",
+      "range": ">=13.0.0 <14.1.1",
+      "installed": [
+        {
+          "path": "node_modules/markdown-it",
+          "version": "13.0.2"
+        }
+      ]
+    },
+    {
+      "name": "markdown-it",
+      "title": "markdown-it: Quadratic complexity DoS in smartquotes rule via replaceAt string operations",
+      "url": "https://github.com/advisories/GHSA-6v5v-wf23-fmfq",
+      "severity": "moderate",
+      "range": "<=14.1.1",
+      "installed": [
+        {
+          "path": "node_modules/markdown-it",
+          "version": "13.0.2"
+        }
+      ]
+    },
+    {
+      "name": "markdown-it",
+      "title": "markdown-it linkify: true has two quadratic paths, so a few hundred KB of markdown blocks the event loop for tens of seconds",
+      "url": "https://github.com/advisories/GHSA-253c-mchw-3w2r",
+      "severity": "moderate",
+      "range": "<14.3.1",
+      "installed": [
+        {
+          "path": "node_modules/markdown-it",
+          "version": "13.0.2"
+        }
+      ]
+    },
+    {
+      "name": "showdown",
+      "title": "Showdown vulnerable to Regular Expression Denial of Service (ReDoS) in link/anchor parsing",
+      "url": "https://github.com/advisories/GHSA-rmmh-p597-ppvv",
+      "severity": "moderate",
+      "range": "<=2.1.0",
+      "installed": [
+        {
+          "path": "node_modules/showdown",
+          "version": "2.1.0"
+        }
+      ]
+    },
+    {
+      "name": "showdown",
+      "title": "showdown metadata title handling allows cross-site scripting",
+      "url": "https://github.com/advisories/GHSA-cr32-g25g-vxjj",
+      "severity": "moderate",
+      "range": "<=2.1.0",
+      "installed": [
+        {
+          "path": "node_modules/showdown",
+          "version": "2.1.0"
+        }
+      ]
+    },
+    {
+      "name": "showdown",
+      "title": "showdown allows stored cross-site scripting through table header ID injection",
+      "url": "https://github.com/advisories/GHSA-22g5-r2x5-97cx",
+      "severity": "moderate",
+      "range": "<=2.1.0",
+      "installed": [
+        {
+          "path": "node_modules/showdown",
+          "version": "2.1.0"
+        }
+      ]
+    },
+    {
+      "name": "simple-git",
+      "title": "simple-git unsafe-operation guard does not block trailer command configuration",
+      "url": "https://github.com/advisories/GHSA-x6jw-m9v5-85vh",
+      "severity": "critical",
+      "range": ">=3.15.0 <4.0.1",
+      "installed": [
+        {
+          "path": "node_modules/simple-git",
+          "version": "3.36.0"
+        }
+      ]
+    },
+    {
+      "name": "simple-git",
+      "title": "simple-git allows command execution through unblocked Git configuration includes",
+      "url": "https://github.com/advisories/GHSA-g4wm-2vf7-vfgr",
+      "severity": "high",
+      "range": "<=3.36.0",
+      "installed": [
+        {
+          "path": "node_modules/simple-git",
+          "version": "3.36.0"
+        }
+      ]
+    },
+    {
+      "name": "simple-git",
+      "title": "simple-git: unsafe-operations plugin bypass via git long-option abbreviation (--receive-p/--exe) -> command execution (residual of CVE-2026-28291)",
+      "url": "https://github.com/advisories/GHSA-858h-whjf-mvg5",
+      "severity": "high",
+      "range": "<=3.36.0",
+      "installed": [
+        {
+          "path": "node_modules/simple-git",
+          "version": "3.36.0"
+        }
+      ]
+    },
+    {
+      "name": "sprintf-js",
+      "title": "sprintf-js vulnerable to denial of service through unbounded precision specifiers",
+      "url": "https://github.com/advisories/GHSA-hp3w-g68c-fv3c",
+      "severity": "moderate",
+      "range": "<=1.1.3",
+      "installed": [
+        {
+          "path": "node_modules/sprintf-js",
+          "version": "1.0.3"
+        }
+      ]
+    },
+    {
+      "name": "stream-json",
+      "title": "stream-json: pick/ignore/filter/replace filters are O(depth\u00b2) on nested input \u2014 small crafted JSON blocks the event loop for seconds\u2192minutes (DoS)",
+      "url": "https://github.com/advisories/GHSA-528h-pc64-c93x",
+      "severity": "moderate",
+      "range": "<=3.4.0",
+      "installed": [
+        {
+          "path": "node_modules/stream-json",
+          "version": "1.9.1"
+        }
+      ]
+    },
+    {
+      "name": "stream-json",
+      "title": "stream-json: JSONC parser and verifier re-scan the whole accumulated comment on every input chunk",
+      "url": "https://github.com/advisories/GHSA-hqr4-qq8f-hg3x",
+      "severity": "moderate",
+      "range": "<=3.5.0",
+      "installed": [
+        {
+          "path": "node_modules/stream-json",
+          "version": "1.9.1"
+        }
+      ]
+    },
+    {
+      "name": "stream-json",
+      "title": "stream-json has a prototype pollution issue: Assembler writes this.current[this.key] on plain objects",
+      "url": "https://github.com/advisories/GHSA-mjw6-4jj6-33hc",
+      "severity": "moderate",
+      "range": "<3.6.0",
+      "installed": [
+        {
+          "path": "node_modules/stream-json",
+          "version": "1.9.1"
+        }
+      ]
+    }
+  ],
+  "remediated_advisories": [
+    "https://github.com/advisories/GHSA-p6gq-j5cr-w38f",
+    "https://github.com/advisories/GHSA-8m3c-c648-2xjj",
+    "https://github.com/advisories/GHSA-wmmp-3585-3rmp",
+    "https://github.com/advisories/GHSA-2x7j-588g-ccc2",
+    "https://github.com/advisories/GHSA-cc9r-2j5m-2m83",
+    "https://github.com/advisories/GHSA-6vj9-mwq6-2f5v",
+    "https://github.com/advisories/GHSA-8vvx-rff5-p5rq",
+    "https://github.com/advisories/GHSA-v53p-9fqp-m79j",
+    "https://github.com/advisories/GHSA-82x6-q7mm-w9cf",
+    "https://github.com/advisories/GHSA-v5mp-jgw5-2x6j"
+  ],
+  "assessment": {
+    "simple_git": "Two critical and two high advisories remain installed. Git workflow node, source-control and promotions modules stay explicitly disabled; native loader and module-registry tests verify denial. Upstream simple-git 4.0.2 breaks the n8n Git default import and changes environment semantics, so no untested major override is applied.",
+    "braces": "One high advisory remains and upstream has no patched npm release. The real file-selector helper runs complex patterns in a worker with a deadline; a deeply nested pattern is rejected while the main process stays responsive. Other observed consumers use deployment-controlled loader paths/proxy patterns. The active workflow has only Webhook, If and Matrix nodes.",
+    "compiler": "Native Dependency-Track currently reports 25 additional Go findings in TypeScript 7.0.2 bundled tsc (Go 1.26.4, x/text v0.38.0), not in the Node.js HTTP server. No newer supported TypeScript 7.x release exists on 2026-10-20. The active workflow does not execute the compiler; these findings remain visible, not suppressed.",
+    "feed_difference": "Fresh npm audit has one moderate sprintf-js advisory absent from the native Trivy/Dependency-Track findings. Before this change: 29 direct npm advisories and 53 native findings (28 npm plus 25 Go)."
+  }
+}

@@ -1,0 +1,323 @@
+---
+# Bounded live scan roots; resolved release paths and installed metadata are recorded.
+schema_version: 1
+systems:
+  proxmox: {libraries: []}
+  caddy: {libraries: []}
+  downloads: {libraries: []}
+  miniflux: {libraries: []}
+  pocket-id: {libraries: []}
+  pangolin-connector: {libraries: []}
+  network-ops: {libraries: []}
+  helix: {libraries: []}
+  incident:
+    libraries:
+      - {deployment: dependency-track, path: /opt/dependency-track/current, types: [jar]}
+      - {deployment: vulnerability-incidents, path: /usr/local/lib/homelab-incidents, types: [python-pkg]}
+  n8n:
+    libraries:
+      - {deployment: n8n, path: /opt/n8n/current, types: [node-pkg]}
+  news-embeddings:
+    libraries:
+      - {deployment: news-embeddings, path: /opt/news-embeddings/venv, types: [python-pkg]}
+  nerocd: {libraries: []}
+  jellyfin:
+    libraries:
+      - {deployment: jellyfin, path: /usr/lib/jellyfin/bin, types: [dotnet-core]}
+  media-automation:
+    libraries:
+      - {deployment: seerr, path: /opt/seerr/current, types: [node-pkg]}
+      - {deployment: shelfmark, path: /opt/shelfmark, types: [python-pkg, node-pkg]}
+      - {deployment: radarr, path: /opt/radarr/current, types: [dotnet-core]}
+      - {deployment: sonarr, path: /opt/sonarr/current, types: [dotnet-core]}
+      - {deployment: prowlarr, path: /opt/prowlarr/current, types: [dotnet-core]}
+  pangolin:
+    libraries:
+      - {deployment: tuwunel, path: /usr/sbin/tuwunel, types: [rustbinary]}
+    # Conservative source candidates, not an assertion of compiled dependencies.
+    # Changing an installed binary/image invalidates this association until reviewed.
+    source_locks:
+      library/tuwunel:
+        path: /etc/homelab-sbom/tuwunel-Cargo.lock
+        url: https://raw.githubusercontent.com/matrix-construct/tuwunel/5b3669144219d5d4c0774743c84191b476f1b54f/Cargo.lock
+        sha256: 71992452faf3d964ba26779ab68adbef0803593d7f406112a70610779089f69e
+        repository: https://github.com/matrix-construct/tuwunel
+        revision: 5b3669144219d5d4c0774743c84191b476f1b54f
+        release: 1.9.0
+        artifact_sha256: e494b686909dddc0d140e43b49191cf89d50ea4e9c6bcf662e5be4a225465648
+        association: >-
+          Official v1.9.0 release tag resolves to this commit. The installed binary
+          matches the binary inside the official Debian asset with SHA-256
+          1d5d9d326e16b52a3e8b13d6e847fc1b661803a415c189d90b2755bef236c613.
+          This is a reviewed release-source association, not a build attestation.
+      container/compose/matrix-rtc/jwt:
+        path: /etc/homelab-sbom/lk-jwt-service-Cargo.lock
+        url: https://raw.githubusercontent.com/element-hq/lk-jwt-service/6c761252522bdc0d3d9db176e933096d19a1ccbe/Cargo.lock
+        sha256: a653e4bb75b62f7e74dffdca6966ab264a05e0f0a358fdfd0bcad139c739d3e3
+        repository: https://github.com/element-hq/lk-jwt-service
+        revision: 6c761252522bdc0d3d9db176e933096d19a1ccbe
+        release: 0.7.0
+        image_id: sha256:c2171b57f2c05b0f0f5336931d12f93cb71452c6290bebd167d21aafebf38592
+        association: >-
+          OCI index e0c7cecfa74e2342a3e79d47e1d4ab4bd228fe05b1a4dc4ba7f807686b0c214b
+          includes amd64 manifest cbbbe3ace3be31b9c83b46a85e0a6577ae68894b3f5ff0c5e991d93a86a7686a.
+          Its publisher BuildKit SLSA statement cdf56e8cef6d1ba2dce996c8bdf10e22c236e7d7dc0ce5b92ca9af9340a1fa07
+          identifies this Git revision; Dockerfile builds lk-jwt-service with --locked.
+          The workspace lock also contains test crates and declares application version 0.6.0.
+  plan-runner:
+    libraries:
+      - {deployment: plan-runner, path: /opt/actions-runner, types: [dotnet-core, node-pkg]}
+  hermes-agent:
+    libraries:
+      - {deployment: diagnostic-agent, path: /usr/local/lib/hermes-agent/venv, types: [python-pkg]}
+  next-plaid:
+    libraries:
+      - {deployment: next-plaid, path: /usr/local/bin/next-plaid-api, types: [rustbinary]}
+  firecrawl: {libraries: []}
+  eu-law-db: {libraries: []}
+
+additional_units:
+  dependency-track: [dependency-track.service, dependency-track-frontend.service, postgresql@17-dtrack.service]
+  news-embeddings: [news-embeddings.service, news-embeddings-firewall.service]
+  vulnerability-incidents: [homelab-incidents.service, homelab-incidents-aliases.service, homelab-incidents-reverse-tunnel.service]
+  helix-cve: [helix-cve.service]
+  next-plaid: [next-plaid.service]
+  firecrawl: [firecrawl.service]
+  eu-law-postgresql: [postgresql@17-main.service, postgresql.service]
+  miniflux-postgresql: [postgresql@*.service, postgresql.service]
+  nerocd-postgresql: []
+  plan-runner: [actions.runner.*.service, tuwunel-backup.service]
+  beszel-agents: [beszel-agent.service]
+  matrix-alert-bridge: [crowdsec-matrix-bridge.service, ip-country-db-update.service]
+  coredns-ddns: [cloudflare-ddns.service]
+  diagnostic-agent:
+    - hermes-gateway.service
+    - hermes-gateway-zig.service
+    - zag-model.service
+    - zag-model-access.service
+  hypervisor:
+    - pveproxy.service
+    - pvedaemon.service
+    - pvestatd.service
+    - pvescheduler.service
+    - spiceproxy.service
+    - pve-cluster.service
+    - pve-ha-crm.service
+    - pve-ha-lrm.service
+    - pve-firewall.service
+    - qmeventd.service
+
+containers:
+  helix-cve: [helix-cve]
+  beszel: [beszel]
+  crowdsec: [crowdsec]
+  matrix-rtc: [matrix-rtc-*]
+  pangolin: [pangolin, gerbil, traefik]
+  # Compose declarations in ansible/roles/nerocd/tasks/main.yml own the server,
+  # edge, migration and backup jobs. PostgreSQL is a separate deployment below.
+  nerocd: [nerocd-server-*, nerocd-edge-*, nerocd-backup-scheduler-*, nerocd-migrate-*, nerocd-database-tools-*]
+  nerocd-postgresql: [nerocd-postgres-*]
+  firecrawl: [firecrawl-api-*, firecrawl-playwright-service-*, firecrawl-rabbitmq-*, firecrawl-redis-*, firecrawl-nuq-postgres-*]
+  searxng: [firecrawl-searxng-*]
+
+# Stable Compose service identities supplement generated container names. These
+# come from the deployed compose.production.yaml and compose.homelab.yml labels.
+container_services:
+  firecrawl: [api, playwright-service, rabbitmq, redis, nuq-postgres]
+  searxng: [searxng]
+  nerocd: [server, edge, backup-scheduler, migrate, database-tools, role-init, backup-data-init, secret-init]
+  nerocd-postgresql: [postgres, postgres-secret-init, pgdata-init]
+
+# These are declared build environments, not inferred from an empty host list.
+build_consumers:
+  plan-runner: [plan-runner]
+
+# The target role installs binutils for two bounded read-only ELF inspections.
+# The gateway accepts only an exact artifact retained by a source scan.
+package_capabilities:
+  - id: diagnostic-artifact-inspection
+    root_package: binutils
+    binary_packages: [binutils, binutils-common, binutils-x86-64-linux-gnu, libbinutils, libctf0, libctf-nobfd0, libgprofng0, libsframe1]
+    required_executables: [/usr/bin/readelf]
+    applications: [diagnostic-agent]
+    evidence:
+      - ansible/roles/homelab_agent_target/tasks/main.yml
+      - ansible/roles/homelab_agent_target/files/homelab_evidence_gateway.py
+
+# Finite current execution/input domains are desired membership declarations.
+# They do not prove that the members were observed; the collector reconciles a
+# separately retained observation before it can close package-consumer scope.
+execution_domains:
+  - id: native-elf-inspection
+    hosts: [network-ops]
+    packages: [binutils, binutils-x86-64-linux-gnu]
+    files: [/usr/bin/readelf, /usr/bin/x86_64-linux-gnu-readelf]
+    entries: [ssh-key:homelab-agent:forced-broker]
+    inputs: [accepted-installed-artifact]
+    authority_paths:
+      - /usr/bin/readelf
+      - /usr/bin/x86_64-linux-gnu-readelf
+      - /usr/local/libexec/homelab-agent-remote
+      - /usr/local/libexec/homelab-evidence-gateway
+      - /usr/local/libexec/homelab-coverage-read
+      - /etc/homelab-agent/units.json
+      - /etc/homelab-agent/evidence-policy.json
+    entry_rules:
+      - {kind: forced_ssh_command, command: /usr/local/libexec/homelab-agent-remote}
+    input_rules:
+      - kind: verified_file_contracts
+        member: accepted-installed-artifact
+        paths: [/usr/local/libexec/homelab-agent-remote, /usr/local/libexec/homelab-evidence-gateway, /usr/local/libexec/homelab-coverage-read]
+        require_snapshot_artifact_authority: true
+        sudo_account: homelab-agent
+        sudo_commands: ['(root) NOPASSWD: /usr/local/libexec/homelab-evidence-gateway', '(root) NOPASSWD: /usr/local/libexec/homelab-coverage-read']
+    file_contracts:
+      - {path: /usr/local/libexec/homelab-agent-remote, source: ansible/roles/homelab_agent_target/files/homelab_agent_remote.py}
+      - {path: /usr/local/libexec/homelab-evidence-gateway, source: ansible/roles/homelab_agent_target/files/homelab_evidence_gateway.py}
+      - {path: /usr/local/libexec/homelab-coverage-read, source: ansible/roles/update_monitor/files/homelab_coverage_read.py}
+    disposition: administrative_input_boundary
+  - id: native-elf-declared-dependencies
+    hosts: [network-ops]
+    packages: [binutils-common, binutils-x86-64-linux-gnu, libbinutils, libctf0, libctf-nobfd0, libgprofng0, libsframe1]
+    files: []
+    elf_dependency_roots: [/usr/bin/readelf]
+    entries: [ssh-key:homelab-agent:forced-broker]
+    inputs: [accepted-installed-artifact]
+    authority_paths:
+      - /usr/local/libexec/homelab-agent-remote
+      - /usr/local/libexec/homelab-evidence-gateway
+      - /usr/local/libexec/homelab-coverage-read
+    entry_rules:
+      - {kind: forced_ssh_command, command: /usr/local/libexec/homelab-agent-remote}
+    input_rules:
+      - kind: verified_file_contracts
+        member: accepted-installed-artifact
+        paths: [/usr/local/libexec/homelab-agent-remote, /usr/local/libexec/homelab-evidence-gateway, /usr/local/libexec/homelab-coverage-read]
+        require_snapshot_artifact_authority: true
+        sudo_account: homelab-agent
+        sudo_commands: ['(root) NOPASSWD: /usr/local/libexec/homelab-evidence-gateway', '(root) NOPASSWD: /usr/local/libexec/homelab-coverage-read']
+    file_contracts:
+      - {path: /usr/local/libexec/homelab-agent-remote, source: ansible/roles/homelab_agent_target/files/homelab_agent_remote.py}
+      - {path: /usr/local/libexec/homelab-evidence-gateway, source: ansible/roles/homelab_agent_target/files/homelab_evidence_gateway.py}
+      - {path: /usr/local/libexec/homelab-coverage-read, source: ansible/roles/update_monitor/files/homelab_coverage_read.py}
+    disposition: administrative_input_boundary
+  - id: operator-ssh
+    hosts: [network-ops]
+    packages: [openssh-server]
+    files: [/usr/sbin/sshd]
+    entries: [ssh-key:root:unrestricted, ssh-key:homelab-admin:unrestricted]
+    inputs: [operator-ssh-session]
+    authority_paths: [/etc/ssh/sshd_config]
+    entry_rules: [{kind: unrestricted_ssh_key}, {kind: ssh_password_pam}]
+    input_rules: []
+    disposition: administrative_input_boundary
+  - id: forced-evidence-broker
+    hosts: [network-ops]
+    packages: [openssh-server]
+    files: [/usr/sbin/sshd]
+    entries: [ssh-key:homelab-agent:forced-broker]
+    inputs: [accepted-snapshot-request]
+    authority_paths:
+      - /usr/local/libexec/homelab-agent-remote
+      - /usr/local/libexec/homelab-evidence-gateway
+      - /usr/local/libexec/homelab-coverage-read
+    entry_rules:
+      - {kind: forced_ssh_command, command: /usr/local/libexec/homelab-agent-remote}
+    input_rules:
+      - kind: verified_file_contracts
+        member: accepted-snapshot-request
+        paths: [/usr/local/libexec/homelab-agent-remote, /usr/local/libexec/homelab-evidence-gateway, /usr/local/libexec/homelab-coverage-read]
+        sudo_account: homelab-agent
+        sudo_commands: ['(root) NOPASSWD: /usr/local/libexec/homelab-evidence-gateway', '(root) NOPASSWD: /usr/local/libexec/homelab-coverage-read']
+    file_contracts:
+      - {path: /usr/local/libexec/homelab-agent-remote, source: ansible/roles/homelab_agent_target/files/homelab_agent_remote.py}
+      - {path: /usr/local/libexec/homelab-evidence-gateway, source: ansible/roles/homelab_agent_target/files/homelab_evidence_gateway.py}
+      - {path: /usr/local/libexec/homelab-coverage-read, source: ansible/roles/update_monitor/files/homelab_coverage_read.py}
+    disposition: administrative_input_boundary
+  - id: ssh-preauthentication
+    hosts: [network-ops]
+    packages: [openssh-server]
+    files: [/usr/sbin/sshd]
+    entries: [wildcard-ssh-listener]
+    inputs: [unauthenticated-network-packets]
+    authority_paths: [/etc/ssh/sshd_config]
+    entry_rules:
+      - {kind: listener, pattern: 'LISTEN.*(:22 |\]:22 )', member: wildcard-ssh-listener}
+    input_rules:
+      - {kind: listener_input, pattern: 'LISTEN.*(:22 |\]:22 )', member: unauthenticated-network-packets}
+    disposition: requires_work
+  - id: coredns-resolution
+    hosts: [network-ops]
+    packages: [coredns]
+    files: [/usr/local/bin/coredns]
+    operation_files: [/usr/local/bin/coredns]
+    entries: [coredns.service]
+    inputs: [lan-dns-request, upstream-dns-response]
+    authority_paths: [/usr/local/bin/coredns]
+    entry_rules: [{kind: service, id: coredns.service}]
+    input_rules:
+      - kind: current_service_contract
+        service: coredns.service
+        members: [lan-dns-request, upstream-dns-response]
+        paths: [/usr/local/bin/coredns]
+    disposition: requires_work
+  - id: cloudflare-ddns-update
+    hosts: [network-ops]
+    packages: [python3.13-minimal]
+    files: [/usr/bin/python3.13]
+    operation_files: [/usr/local/libexec/cloudflare-ddns]
+    interpreter: /usr/bin/python3.13
+    entries: [cloudflare-ddns.timer, cloudflare-ddns.service]
+    inputs: [systemd-timer, public-ip-https, cloudflare-api-https]
+    authority_paths:
+      - /usr/bin/python3.13
+      - /usr/local/libexec/cloudflare-ddns
+      - /etc/systemd/system/cloudflare-ddns.service
+      - /etc/systemd/system/cloudflare-ddns.timer
+      - /etc/cloudflare-ddns.env
+    entry_rules:
+      - {kind: service_and_activators, id: cloudflare-ddns.service}
+    input_rules:
+      - kind: current_service_contract
+        service: cloudflare-ddns.service
+        members: [systemd-timer, public-ip-https, cloudflare-api-https]
+        paths: [/usr/local/libexec/cloudflare-ddns]
+    file_contracts:
+      - path: /usr/local/libexec/cloudflare-ddns
+        required_literals: [urllib.request.urlopen, 'https://api.cloudflare.com/client/v4']
+    disposition: requires_work
+  - id: observed-extra-services
+    hosts: [network-ops]
+    packages: [postfix]
+    files: [/usr/sbin/postfix]
+    operation_files: [/usr/sbin/postfix]
+    entries: [postfix.service]
+    inputs: []
+    authority_paths: [/usr/sbin/postfix]
+    entry_rules: [{kind: service, id: postfix.service}]
+    disposition: requires_work
+
+execution_admission:
+  network-ops:
+    accounts: [root, homelab-admin, homelab-agent, sync]
+    recognized_sudo_rules:
+      - '(ALL : ALL) NOPASSWD: ALL'
+      - '(ALL:ALL) NOPASSWD: ALL'
+      - '(ALL) ALL'
+      - '(ALL : ALL) ALL'
+      - '(root) NOPASSWD: /usr/local/libexec/homelab-evidence-gateway'
+      - '(root) NOPASSWD: /usr/local/libexec/homelab-coverage-read'
+    ssh_fields:
+      - passwordauthentication
+      - kbdinteractiveauthentication
+      - pubkeyauthentication
+      - permitrootlogin
+      - authenticationmethods
+      - authorizedkeysfile
+      - authorizedkeyscommand
+      - usepam
+    ssh_contexts:
+      - {user: root, host: hermes-agent, remote_address: 10.42.0.201, local_address: 10.42.0.211, port: 22}
+      - {user: homelab-admin, host: hermes-agent, remote_address: 10.42.0.201, local_address: 10.42.0.211, port: 22}
+      - {user: homelab-agent, host: hermes-agent, remote_address: 10.42.0.201, local_address: 10.42.0.211, port: 22}
+      - {user: sync, host: hermes-agent, remote_address: 10.42.0.201, local_address: 10.42.0.211, port: 22}

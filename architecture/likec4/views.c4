@@ -1,0 +1,133 @@
+views {
+  view index {
+    title 'Homelab at a glance'
+    description '''
+      The durable shape of the project: a public access and monitoring plane on
+      the VPS, a direct home edge for protocol-sensitive services, and split DNS
+      that keeps LAN access independent of the VPS.
+    '''
+
+    include operator
+    include household
+    include remote_browser
+    include lan_client
+    include cloudflare
+    include homelab.identity.pocketid
+    include homelab.remote.pangolin
+    include homelab.remote.beszel
+    include homelab.home_edge.coredns
+    include homelab.home_edge.caddy
+    include homelab.home_edge.newt
+    include homelab.services.infrastructure_apps
+    include homelab.services.media_apps
+    include homelab.services.download_apps
+    include homelab.services.information_apps
+    include homelab.services.communication_apps
+
+    autoLayout LeftRight 150 100
+  }
+
+  view ingress_dns {
+    title 'Ingress and split DNS'
+    description '''
+      Browser services enter through Pangolin remotely and Caddy locally.
+      Pocket ID and Jellyfin enter through the home edge. Matrix terminates on
+      the VPS without Pangolin browser authentication. Cloudflare is DNS only.
+    '''
+
+    include remote_browser
+    include lan_client
+    include pangolin_client
+    include cloudflare
+    include matrix_federation
+    include homelab.remote.gerbil
+    include homelab.remote.traefik
+    include homelab.remote.pangolin
+    include homelab.remote.vps_crowdsec
+    include homelab.home_edge.asus
+    include homelab.home_edge.coredns
+    include homelab.home_edge.ddns
+    include homelab.home_edge.newt
+    include homelab.home_edge.caddy
+    include homelab.home_edge.home_crowdsec
+    include homelab.identity.pocketid
+    include homelab.services.infrastructure_apps.proxmox
+    include homelab.services.media_apps.jellyfin
+    include homelab.services.media_apps.shelfmark
+    include homelab.services.media_apps.seerr
+    include homelab.services.media_apps.radarr
+    include homelab.services.media_apps.sonarr
+    include homelab.services.media_apps.prowlarr
+    include homelab.services.download_apps.transmission
+    include homelab.services.information_apps.miniflux
+    include homelab.services.communication_apps.tuwunel
+    include homelab.services.communication_apps.matrix_rtc
+    include homelab.remote.beszel
+
+    autoLayout LeftRight 140 90
+  }
+
+  view identity_access {
+    title 'Identity, roles, and application sessions'
+    description '''
+      Pocket ID is the central identity provider. Pangolin authenticates once
+      and evaluates its resource roles, while native-OIDC applications still
+      create their own sessions. Miniflux is the deliberate single-login header
+      integration; Transmission relies on the Pangolin gate remotely.
+    '''
+
+    include operator
+    include household
+    include homelab.identity.*
+    include homelab.remote.pangolin
+    include homelab.remote.beszel
+    include homelab.services.infrastructure_apps.proxmox
+    include homelab.services.media_apps.jellyfin
+    include homelab.services.media_apps.shelfmark
+    include homelab.services.media_apps.seerr
+    include homelab.services.media_apps.radarr
+    include homelab.services.media_apps.sonarr
+    include homelab.services.media_apps.prowlarr
+    include homelab.services.download_apps.transmission
+    include homelab.services.information_apps.miniflux
+
+    autoLayout LeftRight 150 100
+  }
+
+  view observability_security {
+    title 'Observability, security, and alerting'
+    description '''
+      Beszel answers whether systems are healthy. Independent CrowdSec engines
+      enforce at each internet edge. The Matrix bridge sends only actionable
+      health, ban, release, and serious fixable-CVE notices.
+    '''
+
+    include upstream_projects
+    include homelab.remote.traefik
+    include homelab.remote.vps_crowdsec
+    include homelab.remote.beszel
+    include homelab.home_edge.caddy
+    include homelab.home_edge.home_crowdsec
+    include homelab.operations.beszel_agents
+    include homelab.operations.update_monitor
+    include homelab.services.communication_apps.matrix_bridge
+    include homelab.services.communication_apps.tuwunel
+    include homelab.services.communication_apps.matrix_rtc
+
+    autoLayout LeftRight 150 110
+  }
+
+  deployment view current_deployment {
+    title 'Current production deployment'
+    description 'Active managed services across the Example Hosting VPS and node1.'
+    includeAncestors: true
+
+    include production.**
+    exclude * -> *
+    include production.vps.docker -> production.home.node1.edge
+    include production.home.node1.edge -> production.home.node1.applications
+    include production.home.node1.applications -> production.home.node1.operations
+
+    autoLayout LeftRight 130 80
+  }
+}

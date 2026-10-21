@@ -1,0 +1,38 @@
+[Unit]
+Description=Private EmbeddingGemma retrieval helper for Daily News
+Wants=network-online.target
+Requires=news-embeddings-firewall.service
+After=network-online.target news-embeddings-firewall.service
+
+[Service]
+Type=simple
+User=news-embeddings
+Group=news-embeddings
+WorkingDirectory=/opt/news-embeddings
+EnvironmentFile=/etc/news-embeddings/environment
+Environment=HF_HOME=/var/lib/news-embeddings/huggingface
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/news-embeddings/venv/bin/python /opt/news-embeddings/worker.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+DevicePolicy=closed
+DeviceAllow=/dev/nvidia0 rw
+DeviceAllow=/dev/nvidiactl rw
+DeviceAllow=/dev/nvidia-uvm rw
+DeviceAllow=/dev/nvidia-uvm-tools rw
+ReadWritePaths=/var/lib/news-embeddings
+MemoryHigh=3G
+MemoryMax=3500M
+
+[Install]
+WantedBy=multi-user.target

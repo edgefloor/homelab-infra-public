@@ -1,0 +1,17 @@
+---
+caddy_version: 2.11.4
+caddy_repository_key_sha256: 783dfee04b19e851a928cd87b34710213ebbe7628f98d9f34595ab83be578c00
+caddy_cloudflare_module: github.com/caddy-dns/cloudflare@v0.2.4
+caddy_cloudflare_environment_file: /etc/caddy/cloudflare.env
+caddy_access_log_path: /var/log/caddy/access.log
+caddy_domain: homelab.example
+caddy_staging_message: Caddy staging is healthy
+caddy_trusted_proxy_ranges:
+  - 10.42.0.210/32
+caddy_pangolin_source_ranges:
+  - 10.42.0.210/32
+caddy_internal_source_ranges:
+  - 127.0.0.0/8
+  - ::1/128
+  - 10.42.0.0/24
+  - 10.250.0.0/24

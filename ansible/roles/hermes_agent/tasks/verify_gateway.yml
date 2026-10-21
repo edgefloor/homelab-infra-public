@@ -1,0 +1,29 @@
+---
+- name: Verify the running Hermes gateway has its required Matrix connection
+  become_user: '{{ hermes_agent_user }}'
+  ansible.builtin.command:
+    argv:
+      - '{{ hermes_agent_release_dir }}/venv/bin/python'
+      - -c
+      - |
+        import json, os
+        from pathlib import Path
+        from gateway.control_socket import query_gateway_control
+        status = query_gateway_control(Path(os.environ['HERMES_HOME']), 'status')
+        assert status, 'Hermes control socket did not answer'
+        matrix = status.get('platforms', {}).get('matrix', {})
+        assert status.get('gateway_state') == 'running', status.get('gateway_state')
+        assert matrix.get('state') == 'connected', matrix
+        assert status.get('session_store', {}).get('status') == 'ok', 'Session store unavailable'
+        print(json.dumps({'gateway': 'running', 'matrix': matrix['state'],
+                          'session_store': 'ok', 'answered_at': status['answered_at']}))
+  environment:
+    HOME: '{{ hermes_agent_home }}'
+    HERMES_HOME: '{{ hermes_agent_config_home }}'
+    PYTHONPATH: '{{ hermes_agent_release_dir }}'
+  changed_when: false
+  register: hermes_gateway_connection
+  retries: 6
+  delay: 5
+  until: hermes_gateway_connection.rc == 0
+  when: "'platform.matrix' in hermes_agent_required_features"

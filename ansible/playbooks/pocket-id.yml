@@ -1,0 +1,23 @@
+---
+- name: Configure the Pocket ID target
+  hosts: pocket_id_servers
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, pocket_id]
+        cve_provisioning_installations:
+          - "deployment:pocket-id"
+          - "binary:/opt/pocket-id/pocket-id"
+        cve_provisioning_update_channels:
+          - installation: "binary:/opt/pocket-id/pocket-id"
+            kind: release-feed
+            source: Pocket ID
+            url: https://github.com/pocket-id/pocket-id/releases.atom
+            channel: stable
+            platform: linux-amd64
+            installed_command:
+              - /usr/bin/readlink
+              - --canonicalize
+              - /opt/pocket-id/pocket-id
+            installed_pattern: '/releases/(v?[0-9]+(?:\.[0-9]+)+)/'

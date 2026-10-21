@@ -1,0 +1,23 @@
+---
+servarr_apps:
+  - name: radarr
+    display_name: Radarr
+    version: 6.3.0.10514
+    archive_url: https://github.com/Radarr/Radarr/releases/download/v6.3.0.10514/Radarr.master.6.3.0.10514.linux-core-x64.tar.gz
+    archive_sha256: 41d6455c037ff267c5ad5a0f0de4502cebe8f89ec3d051da97851933d48a4047
+    port: 7878
+    start_service: true
+  - name: sonarr
+    display_name: Sonarr
+    version: 4.0.19.2979
+    archive_url: https://github.com/Sonarr/Sonarr/releases/download/v4.0.19.2979/Sonarr.main.4.0.19.2979.linux-x64.tar.gz
+    archive_sha256: b691b3584c31c0b5514058dee81071c923f63d59a37d19e32f92fa13eaa153db
+    port: 8989
+    start_service: true
+  - name: prowlarr
+    display_name: Prowlarr
+    version: 2.5.2.5491
+    archive_url: https://github.com/Prowlarr/Prowlarr/releases/download/v2.5.2.5491/Prowlarr.master.2.5.2.5491.linux-core-x64.tar.gz
+    archive_sha256: 22fe95742869d7af5e16d420c7889185579152ea8324be6c6e4e3cd011f4c37b
+    port: 9696
+    start_service: true

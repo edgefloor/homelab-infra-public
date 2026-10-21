@@ -1,0 +1,6 @@
+---
+newt_version: 1.16.0
+newt_binary_url: https://github.com/fosrl/newt/releases/download/1.16.0/newt_linux_amd64
+newt_binary_sha256: edb2e3d68549e009efdd461939db80c8ae43915fae89de8a332f8a29e00c92a8
+newt_accept_clients: false
+newt_start_service: true

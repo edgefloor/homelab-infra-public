@@ -1,0 +1,17 @@
+[Unit]
+Description=Persistent CVE lifecycle HelixDB
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f helix-cve
+ExecStart=/usr/bin/docker run --rm --pull=never --name helix-cve --network host --read-only --cap-drop ALL --security-opt no-new-privileges --memory={{ cve_helix_memory }} --memory-swap={{ cve_helix_memory }} --cpus=2 --pids-limit=128 --tmpfs /tmp:rw,noexec,nosuid,size=64m --mount type=bind,source={{ cve_helix_data_directory }},target=/var/lib/helix --env HELIX_HOME=/tmp/helix --env HELIX_TELEMETRY_LEVEL=off --env HELIX_DATA_DIR=/var/lib/helix --env DB_PATH=cve-lifecycle --env HELIX_HTTP_ADDR={{ cve_helix_http_address }}:{{ cve_helix_http_port }} --env HELIX_GRPC_ADDR={{ cve_helix_grpc_address }}:{{ cve_helix_grpc_port }} {{ cve_helix_image_id }}
+ExecStop=/usr/bin/docker stop --time 60 helix-cve
+TimeoutStopSec=75
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

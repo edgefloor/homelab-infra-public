@@ -1,0 +1,41 @@
+---
+schema_version: 1
+id: n8n
+name: n8n
+upstream:
+  repository: https://github.com/n8n-io/n8n
+  release: 2.43.8
+  commit: bf8e523d409b74bceb990a37e9a2dc7ffe1507d7
+  distribution: official_package
+  distribution_reason: Official npm artifact includes the compiled editor and native runtime dependencies; retain its integrity lock alongside the release.
+runtime: native_systemd
+license:
+  edition: registered_community
+  certificate_storage: application_database
+  native_oidc_entitlement: false
+environments:
+  staging: { target: n8n, status: fresh_deployment }
+  production: { target: n8n, status: active_lan_via_caddy_remote_via_pangolin }
+routing: { caddy: lan, pangolin: remote }
+authentication:
+  remote_roles: [Infrastructure]
+  gateway: pocket_id_via_pangolin
+  application: pangolin_identity_to_native_session
+  lan_browser: n8n_local_recovery_login
+  application_sso:
+    status: active
+    protocol: trusted_proxy_header
+    provider: pocket_id_via_pangolin
+    implementation: external_hook
+    binding: stable_subject_to_existing_n8n_user_id
+    proxy_identity_creation: mapped_existing_users_only
+    native_oidc: disabled
+execution:
+  javascript: internal_task_runner
+  python: external_runner_not_configured
+health:
+  local_url: http://10.42.0.216:5678/healthz/readiness
+  expected_units: [n8n.service]
+state:
+  paths: [/var/lib/n8n]
+  backup_required_before_cutover: true

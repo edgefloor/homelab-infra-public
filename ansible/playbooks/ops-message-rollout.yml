@@ -1,0 +1,207 @@
+---
+- name: Require a quiet investigation queue
+  hosts: incident_servers
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Check pending work without changing it
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import sqlite3
+            with sqlite3.connect('file:/var/lib/homelab-incidents/incidents.db?mode=ro',uri=True) as db:
+                assert db.execute("SELECT count(*) FROM jobs WHERE state IN ('queued','running','deferred')").fetchone()[0]==0, 'Wait for existing investigations to finish'
+                assert db.execute('SELECT count(*) FROM outbox WHERE delivered IS NULL').fetchone()[0]==0, 'Wait for pending notifications to deliver'
+      changed_when: false
+
+- name: Pause Zig and the worker for the message update
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Record whether manual execution is enabled
+      ansible.builtin.command:
+        argv: [systemctl, is-enabled, zag-ops-worker.service]
+      register: message_worker_enabled
+      failed_when: message_worker_enabled.rc not in [0, 1]
+      changed_when: false
+    - name: Pause conversational admission and manual execution
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        state: stopped
+      loop: [hermes-gateway-zig.service, zag-ops-worker.service]
+    - name: Inspect the existing Zig continuation module
+      ansible.builtin.service_facts:
+    - name: Pause the existing Zig continuation module
+      ansible.builtin.systemd_service:
+        name: zig-investigation-replies.service
+        state: stopped
+      when: "'zig-investigation-replies.service' in ansible_facts.services"
+    - name: Create a private runtime rollback directory
+      ansible.builtin.tempfile:
+        state: directory
+        path: /var/backups
+        prefix: ops-messages-
+      register: message_rollback
+    - name: Back up the installed message runtime
+      ansible.builtin.command:
+        argv: [tar, -czf, '{{ message_rollback.path }}/runtime.tar.gz', -C, /, usr/local/lib/zag-ops, usr/local/lib/hermes-agent/gateway/run.py, var/lib/zig/.hermes/profiles/zig/config.yaml, var/lib/zig/.hermes/profiles/zig/plugins/zig-incidents]
+      changed_when: true
+
+- import_playbook: cve-message-rollout.yml
+
+- name: Install and verify the operational conversation
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    message_zig_home: /var/lib/zig/.hermes/profiles/zig
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Install the profile-local onboarding switch
+      ansible.builtin.script: ../roles/hermes_agent/files/configure_gateway_onboarding.py /usr/local/lib/hermes-agent/gateway/run.py
+      register: message_onboarding_patch
+      changed_when: "'updated' in message_onboarding_patch.stdout"
+    - name: Read the current Zig configuration
+      ansible.builtin.slurp:
+        src: '{{ message_zig_home }}/config.yaml'
+      register: message_zig_config
+      no_log: true
+    - name: Disable onboarding and interim narration
+      ansible.builtin.copy:
+        content: "{{ (message_zig_config.content | b64decode | from_yaml) | combine({'onboarding': {'enabled': false, 'profile_build': 'off'}, 'display': {'interim_assistant_messages': false}}, recursive=true) | to_nice_yaml }}"
+        dest: '{{ message_zig_home }}/config.yaml'
+        owner: root
+        group: zig
+        mode: '0640'
+      no_log: true
+    - name: Install the incident conversation tools
+      ansible.builtin.copy:
+        src: ../roles/vulnerability_incidents/files/zig_incidents.py
+        dest: '{{ message_zig_home }}/plugins/zig-incidents/__init__.py'
+        owner: root
+        group: zig
+        mode: '0640'
+    - name: Install the matching evidence worker
+      ansible.builtin.copy:
+        src: '../roles/vulnerability_incidents/files/{{ item }}.py'
+        dest: '/usr/local/lib/zag-ops/{{ item }}.py'
+        mode: '0644'
+      loop: [zag_ops_worker, investigation_evidence]
+    - name: Install the evidence worker unit
+      ansible.builtin.copy:
+        src: ../roles/vulnerability_incidents/files/zag-ops-worker.service
+        dest: /etc/systemd/system/zag-ops-worker.service
+        mode: '0644'
+    - name: Create the native Zig continuation module directory
+      ansible.builtin.file:
+        path: /usr/local/lib/zig-replies
+        state: directory
+        owner: root
+        group: zig
+        mode: '0750'
+    - name: Install the native Zig continuation module
+      ansible.builtin.copy:
+        src: '../roles/vulnerability_incidents/files/{{ item }}.py'
+        dest: '/usr/local/lib/zig-replies/{{ item }}.py'
+        owner: root
+        group: zig
+        mode: '0640'
+      loop: [incident_client, zig_reply]
+    - name: Install the native Zig continuation unit
+      ansible.builtin.copy:
+        src: ../roles/vulnerability_incidents/files/zig-investigation-replies.service
+        dest: /etc/systemd/system/zig-investigation-replies.service
+        mode: '0644'
+    - name: Remove the retired worker writing rules
+      ansible.builtin.file:
+        dest: /etc/zag-ops/writing-style.md
+        state: absent
+    - name: Install native acceptance checks
+      ansible.builtin.copy:
+        src: '../../scripts/{{ item }}.py'
+        dest: '/usr/local/lib/zag-ops/{{ item }}.py'
+        mode: '0644'
+      loop: [verify_zig_gateway, verify_zig_profile]
+    - name: Check fresh and existing Matrix onboarding without sending messages
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/lib/zag-ops/verify_zig_gateway.py]
+      become_user: zig
+      environment:
+        HOME: /var/lib/zig
+        HERMES_HOME: '{{ message_zig_home }}'
+        PYTHONPATH: /usr/local/lib/hermes-agent:/usr/local/lib/zag-ops
+      changed_when: false
+    - name: Check the native Zig profile and retained incident access
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/lib/zag-ops/verify_zig_profile.py]
+      become_user: zig
+      environment:
+        HOME: /var/lib/zig
+        HERMES_HOME: '{{ message_zig_home }}'
+        PYTHONPATH: /usr/local/lib/hermes-agent:/usr/local/lib/zag-ops
+      changed_when: false
+    - name: Verify worker isolation without a model call
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/lib/zag-ops/zag_ops_worker.py, --self-test]
+      become_user: zag-ops
+      environment:
+        HOME: /var/lib/zag-ops
+        HERMES_HOME: /var/lib/zag-ops/.hermes
+        PYTHONPATH: /usr/local/lib/hermes-agent:/usr/local/lib/zag-ops
+      changed_when: false
+    - name: Verify that Zig's continuation preserves its response unchanged
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/lib/zig-replies/zig_reply.py, --self-test]
+      become_user: zig
+      environment:
+        HOME: /var/lib/zig
+        HERMES_HOME: '{{ message_zig_home }}'
+        PYTHONPATH: /usr/local/lib/hermes-agent:/usr/local/lib/zig-replies
+      changed_when: false
+    - name: Verify that Zig owns the continuation with no action tools
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/lib/zig-replies/zig_reply.py, --profile-test]
+      become_user: zig
+      environment:
+        HOME: /var/lib/zig
+        HERMES_HOME: '{{ message_zig_home }}'
+        PYTHONPATH: /usr/local/lib/hermes-agent:/usr/local/lib/zig-replies
+      changed_when: false
+    - name: Resume Zig through the native gateway
+      ansible.builtin.systemd_service:
+        name: hermes-gateway-zig.service
+        state: started
+        daemon_reload: true
+    - name: Start Zig's native investigation continuations
+      ansible.builtin.systemd_service:
+        name: zig-investigation-replies.service
+        enabled: true
+        state: restarted
+        daemon_reload: true
+    - name: Restore the previous manual execution setting
+      ansible.builtin.systemd_service:
+        name: zag-ops-worker.service
+        state: "{{ 'started' if message_worker_enabled.rc == 0 else 'stopped' }}"
+        daemon_reload: true
+    - name: Report the runtime rollback archive
+      ansible.builtin.debug:
+        msg: '{{ message_rollback.path }}/runtime.tar.gz'

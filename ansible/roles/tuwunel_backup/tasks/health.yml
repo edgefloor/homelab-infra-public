@@ -1,0 +1,42 @@
+---
+- name: Install the read-only Tuwunel backup health check
+  ansible.builtin.copy:
+    src: check_tuwunel_backup.py
+    dest: /usr/local/libexec/check-tuwunel-backup
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the native backup health units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - tuwunel-backup-health.service
+    - tuwunel-backup-health.timer
+  register: tuwunel_backup_health_units
+
+- name: Verify the backup health units
+  ansible.builtin.command:
+    argv: [systemd-analyze, verify, /etc/systemd/system/tuwunel-backup-health.service, /etc/systemd/system/tuwunel-backup-health.timer]
+  changed_when: false
+
+- name: Reload the backup health units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: tuwunel_backup_health_units.changed
+
+- name: Enable hourly backup health checks
+  ansible.builtin.systemd_service:
+    name: tuwunel-backup-health.timer
+    enabled: true
+    state: started
+
+- name: Verify current backup health without clearing backup failures
+  ansible.builtin.systemd_service:
+    name: tuwunel-backup-health.service
+    state: started
+  changed_when: false

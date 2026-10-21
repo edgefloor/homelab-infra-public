@@ -1,0 +1,9 @@
+dt.data-directory={{ dependency_track_data_root }}/application
+dt.datasource.url=jdbc:postgresql://127.0.0.1:{{ dependency_track_postgresql_port }}/dtrack
+dt.datasource.username=dtrack
+dt.datasource.password=${file::/etc/dependency-track/database-password}
+dt.management.host=127.0.0.1
+dt.management.port={{ dependency_track_management_port }}
+dt.cors.enabled=false
+dt.task-scheduler.enabled={{ dependency_track_scheduler_enabled | bool | ternary('true', 'false') }}
+dt.outbound.allowed-destinations={{ dependency_track_outbound_destinations | join(',') }}

@@ -1,0 +1,14 @@
+---
+- name: Configure Firecrawl and SearXNG
+  hosts: firecrawl_servers
+  become: true
+  roles:
+    - common_baseline
+    - firecrawl
+
+- name: Include Firecrawl in the managed guest backup
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+  roles:
+    - managed_backup_membership

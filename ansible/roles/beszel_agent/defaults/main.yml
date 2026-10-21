@@ -1,0 +1,15 @@
+---
+beszel_agent_version: 0.19.0
+beszel_agent_archive_url: >-
+  https://github.com/henrygd/beszel/releases/download/v{{ beszel_agent_version }}/beszel-agent_linux_amd64.tar.gz
+beszel_agent_archive_sha256: 0f85891b290146b336f5c813d1e535e992da35ee79de876e920e2ec748ab732c
+beszel_agent_hub_url: https://beszel.homelab.example
+beszel_agent_system_name: "{{ inventory_hostname }}"
+beszel_agent_service_patterns: ""
+beszel_agent_smart_devices: ""
+beszel_agent_exclude_smart_devices: ""
+beszel_agent_smart_interval: 1h
+beszel_agent_linux_capabilities: []
+beszel_agent_start_service: true
+beszel_agent_token: "{{ lookup('env', 'BESZEL_AGENT_TOKEN') }}"
+beszel_agent_hub_public_key: "{{ lookup('env', 'BESZEL_HUB_PUBLIC_KEY') }}"

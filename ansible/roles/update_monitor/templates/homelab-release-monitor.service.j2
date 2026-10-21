@@ -1,0 +1,29 @@
+[Unit]
+Description=Watch managed upstream RSS feeds for stable releases
+After=network-online.target crowdsec-matrix-bridge.service
+Wants=network-online.target
+Requires=crowdsec-matrix-bridge.service
+
+[Service]
+Type=oneshot
+Environment="UPDATE_MONITOR_WEBHOOK_URL={{ update_monitor_release_webhook_url }}"
+ExecStart=/usr/local/libexec/homelab-release-monitor --feeds /etc/homelab-update-monitor/release-feeds.json --state {{ update_monitor_state_dir }}/release-state.json
+LoadCredential=webhook-secret:{{ update_monitor_credentials_dir }}/webhook-secret
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths={{ update_monitor_state_dir }}
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+UMask=0077
+TimeoutStartSec=5m

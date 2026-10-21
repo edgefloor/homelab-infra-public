@@ -1,0 +1,13 @@
+[Unit]
+Description=Restrict Dependency-Track frontend to the main Caddy proxy
+After=network-pre.target nftables.service
+Before=dependency-track-frontend.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/dependency-track/firewall.nft
+ExecReload=/usr/sbin/nft -f /etc/dependency-track/firewall.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

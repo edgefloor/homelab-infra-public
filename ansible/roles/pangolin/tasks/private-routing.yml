@@ -1,0 +1,90 @@
+---
+- name: Require declared client-private hostnames
+  ansible.builtin.assert:
+    that:
+      - homelab_routing.client_private_hostnames | length > 0
+
+- name: Verify the DNS-validated wildcard certificate is available for private TLS
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import json, sys
+        from pathlib import Path
+        data = json.loads(Path(sys.argv[1]).read_text())
+        wildcard = '*.' + sys.argv[2]
+        assert any(wildcard in cert['domain'].get('sans', [])
+                   for resolver in data.values()
+                   for cert in resolver.get('Certificates', [])), 'wildcard certificate missing'
+      - "{{ pangolin_install_dir }}/config/letsencrypt/acme.json"
+      - "{{ pangolin_base_domain }}"
+  changed_when: false
+
+- name: Read the existing Pangolin server secret
+  ansible.builtin.slurp:
+    src: /etc/pangolin-server-secret
+  register: pangolin_secret_content
+  no_log: true
+
+- name: Prepare the existing Pangolin server secret
+  ansible.builtin.set_fact:
+    pangolin_server_secret: "{{ pangolin_secret_content.content | b64decode | trim }}"
+  no_log: true
+
+- name: Disable native public private-resource placeholders
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ pangolin_install_dir }}/config/config.yml"
+    owner: root
+    group: root
+    mode: '0600'
+    backup: true
+  register: pangolin_private_config
+  no_log: true
+
+- name: Restore public wildcard 404 routing
+  ansible.builtin.template:
+    src: dynamic_config.yml.j2
+    dest: "{{ pangolin_install_dir }}/config/traefik/dynamic_config.yml"
+    owner: root
+    group: root
+    mode: '0640'
+    backup: true
+
+- name: Load native private-routing settings
+  ansible.builtin.command:
+    argv: [docker, compose, restart, pangolin]
+    chdir: "{{ pangolin_install_dir }}"
+  when: pangolin_private_config.changed
+  changed_when: true
+
+- name: Wait for the Pangolin control plane
+  ansible.builtin.command:
+    argv: [docker, exec, pangolin, curl, -fsS, 'http://127.0.0.1:3001/api/v1/']
+  register: pangolin_private_health
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: pangolin_private_health.rc == 0
+
+- name: Verify the provider generates no public routes for client-private names
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - pangolin
+      - node
+      - -e
+      - |
+        const names = {{ homelab_routing.client_private_hostnames | to_json }};
+        fetch('http://127.0.0.1:3001/api/v1/traefik-config')
+          .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(c => {
+            const routers = Object.values(c.http?.routers || {});
+            if (routers.some(r => names.some(n => r.rule?.includes(n)))) {
+              throw new Error('client-private hostname has a public router');
+            }
+            console.log('No generated public routes for client-private hostnames');
+          }).catch(e => { console.error(e.message); process.exit(1); });
+  changed_when: false

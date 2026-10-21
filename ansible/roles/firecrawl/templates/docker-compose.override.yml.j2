@@ -1,0 +1,60 @@
+---
+services:
+  api:
+    restart: unless-stopped
+
+  playwright-service:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  rabbitmq:
+    restart: unless-stopped
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  nuq-postgres:
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  foundationdb:
+    profiles: [fdb]
+
+  foundationdb-init:
+    profiles: [fdb]
+
+  searxng:
+    image: {{ searxng_image }}
+    restart: unless-stopped
+    environment:
+      SEARXNG_BASE_URL: http://10.42.0.215:{{ searxng_port }}/
+      SEARXNG_BIND_ADDRESS: 0.0.0.0
+      SEARXNG_PORT: 8080
+      SEARXNG_SECRET: ${SEARXNG_SECRET}
+    ports:
+      - "{{ searxng_listen_address }}:{{ searxng_port }}:8080"
+    volumes:
+      - {{ firecrawl_runtime_dir }}/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-cache:/var/cache/searxng
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2G
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+        compress: 'true'
+
+volumes:
+  redis-data:
+  rabbitmq-data:
+  postgres-data:
+  searxng-cache:

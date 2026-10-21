@@ -1,0 +1,13 @@
+---
+- name: Bootstrap the dedicated Helix LXC
+  hosts: cve_helix_servers
+  vars:
+    ansible_user: root
+  become: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  roles:
+    - common_baseline

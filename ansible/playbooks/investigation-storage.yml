@@ -1,0 +1,9 @@
+---
+- name: Deploy investigation storage lifecycle
+  hosts: hermes_agents
+  become: true
+  tasks:
+    - name: Install workspace budgets and retention
+      ansible.builtin.include_role:
+        name: homelab_agent_service
+        tasks_from: storage

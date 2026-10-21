@@ -1,0 +1,144 @@
+---
+- name: Require explicit opt-in to the retired custom CVE pipeline
+  ansible.builtin.import_role:
+    name: legacy_cve_guard
+  tags: [always]
+
+- name: Install the agent runtime dependencies
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - git
+      - openssh-client
+      - python3
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Resolve the deployed Hermes account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ homelab_agent_user }}"
+
+- name: Create the retired-state archive directory
+  ansible.builtin.file:
+    path: "{{ homelab_agent_retired_state | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Inspect the migrated investigator state
+  ansible.builtin.stat:
+    path: "{{ homelab_agent_state_dir }}"
+  register: homelab_agent_existing_investigator_state
+
+- name: Inspect the retired investigator archive
+  ansible.builtin.stat:
+    path: "{{ homelab_agent_retired_state }}"
+  register: homelab_agent_retired_investigator_state
+
+- name: Archive the old recursive investigator state
+  ansible.builtin.command:
+    argv:
+      - mv
+      - "{{ homelab_agent_state_dir }}"
+      - "{{ homelab_agent_retired_state }}"
+  when:
+    - homelab_agent_existing_investigator_state.stat.exists
+    - not homelab_agent_retired_investigator_state.stat.exists
+
+- name: Create the agent directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ homelab_agent_state_dir }}"
+      owner: "{{ homelab_agent_user }}"
+      group: "{{ homelab_agent_group }}"
+      mode: '0700'
+    - path: "{{ homelab_agent_ssh_key | dirname }}"
+      owner: "{{ homelab_agent_user }}"
+      group: "{{ homelab_agent_group }}"
+      mode: '0700'
+
+- name: Remove the retired Codex account wrapper
+  ansible.builtin.file:
+    path: /usr/local/bin/homelab-codex
+    state: absent
+
+- name: Inspect the archived restricted-control key
+  ansible.builtin.stat:
+    path: "{{ homelab_agent_retired_state }}/.ssh/id_ed25519"
+  register: homelab_agent_archived_ssh_key
+
+- name: Restore the restricted-control key into the capability state
+  ansible.builtin.copy:
+    src: "{{ homelab_agent_retired_state }}/.ssh/{{ item }}"
+    dest: "{{ homelab_agent_ssh_key | dirname }}/{{ item }}"
+    remote_src: true
+    owner: "{{ homelab_agent_user }}"
+    group: "{{ homelab_agent_group }}"
+    mode: "{{ '0600' if item == 'id_ed25519' else '0644' }}"
+    force: false
+  loop:
+    - id_ed25519
+  when: homelab_agent_archived_ssh_key.stat.exists
+  no_log: true
+
+- name: Inspect the restricted-control public key
+  ansible.builtin.stat:
+    path: "{{ homelab_agent_ssh_key }}.pub"
+  register: homelab_agent_public_key_state
+
+- name: Derive the restricted-control public key when only the private key was archived
+  ansible.builtin.command:
+    argv: [ssh-keygen, -y, -f, "{{ homelab_agent_ssh_key }}"]
+  register: homelab_agent_derived_public_key
+  changed_when: false
+  when:
+    - homelab_agent_archived_ssh_key.stat.exists
+    - not homelab_agent_public_key_state.stat.exists
+  no_log: true
+
+- name: Store the derived restricted-control public key
+  ansible.builtin.copy:
+    content: "{{ homelab_agent_derived_public_key.stdout }} homelab-agent@{{ inventory_hostname }}\n"
+    dest: "{{ homelab_agent_ssh_key }}.pub"
+    owner: "{{ homelab_agent_user }}"
+    group: "{{ homelab_agent_group }}"
+    mode: '0644'
+  when:
+    - homelab_agent_archived_ssh_key.stat.exists
+    - not homelab_agent_public_key_state.stat.exists
+  no_log: true
+
+- name: Generate the restricted remote-control key
+  become_user: "{{ homelab_agent_user }}"
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -q
+      - -t
+      - ed25519
+      - -N
+      - ''
+      - -C
+      - "homelab-agent@{{ inventory_hostname }}"
+      - -f
+      - "{{ homelab_agent_ssh_key }}"
+  args:
+    creates: "{{ homelab_agent_ssh_key }}"
+
+- name: Read the restricted remote-control public key
+  ansible.builtin.slurp:
+    src: "{{ homelab_agent_ssh_key }}.pub"
+  register: homelab_agent_public_key_file
+
+- name: Publish the restricted remote-control public key for target plays
+  ansible.builtin.set_fact:
+    homelab_agent_public_key: >-
+      {{ homelab_agent_public_key_file.content | b64decode | trim }}

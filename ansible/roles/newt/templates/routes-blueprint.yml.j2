@@ -1,0 +1,49 @@
+# Generated from inventory/routes.yml. Newt continuously reconciles this file.
+public-policies:
+{% for route in homelab_routing.routes if route.pangolin is defined %}
+  {{ route.pangolin.policy_id }}:
+    name: Managed {{ route.pangolin.name }} policy
+    sso: {{ route.pangolin.sso | default(true) | lower }}
+    auto-login-idp: {{ route.pangolin.auto_login_idp | default(None) | to_json }}
+    sso-roles:
+{% for role in route.pangolin.roles %}
+      - {{ role }}
+{% endfor %}
+    sso-users: []
+    email-whitelist-enabled: false
+    whitelist-users: []
+    apply-rules: {{ (route.pangolin.policy_rules is defined) | lower }}
+{% if route.pangolin.policy_rules is defined %}
+    rules:
+{% for rule in route.pangolin.policy_rules %}
+      - action: {{ rule.action }}
+        match: {{ rule.match }}
+        value: {{ rule.value }}
+        enabled: {{ rule.enabled | lower }}
+        priority: {{ rule.priority }}
+{% endfor %}
+{% else %}
+    rules: []
+{% endif %}
+{% endfor %}
+
+public-resources:
+{% for route in homelab_routing.routes if route.pangolin is defined %}
+  {{ route.pangolin.resource_id }}:
+    name: {{ route.pangolin.name }}
+    mode: http
+    policy: {{ route.pangolin.policy_id }}
+    full-domain: {{ route.hostname }}
+    ssl: true
+    enabled: true
+{% if route.caddy is defined %}
+    host-header: {{ route.hostname }}
+    tls-server-name: {{ route.hostname }}
+{% endif %}
+    targets:
+      - site: {{ route.pangolin.target.site }}
+        hostname: {{ route.pangolin.target.hostname }}
+        port: {{ route.pangolin.target.port }}
+        method: {{ route.pangolin.target.method }}
+        enabled: true
+{% endfor %}

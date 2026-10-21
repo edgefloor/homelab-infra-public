@@ -1,0 +1,717 @@
+---
+- name: Restore the unmodified personal Zag gateway
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  tags: [restore]
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Inspect services before removing legacy units
+      ansible.builtin.service_facts:
+    - name: Create the private migration archive
+      ansible.builtin.file:
+        path: /var/backups/hermes-zig-migration-20260908
+        state: directory
+        mode: '0700'
+    - name: Preserve the replaced ingress and routing state
+      ansible.builtin.command:
+        argv: [tar, -czf, /var/backups/hermes-zig-migration-20260908/single-zag.tar.gz, -C, /, etc/zag-router, var/lib/zag-router, etc/systemd/system/hermes-gateway.service.d, var/lib/hermes-agent/.hermes/.env]
+        creates: /var/backups/hermes-zig-migration-20260908/single-zag.tar.gz
+    - name: Stop the classifier and personal gateway during restoration
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        state: stopped
+      loop: [hermes-gateway.service, zag-router.service]
+      when: item in ansible_facts.services
+    - name: Restore personal direct-message admission
+      ansible.builtin.lineinfile:
+        path: "{{ homelab_investigation_execution.controller_home }}/.hermes/.env"
+        regexp: '^MATRIX_ALLOWED_ROOMS='
+        line: 'MATRIX_ALLOWED_ROOMS=!direct-messages-only:matrix.homelab.example'
+      no_log: true
+    - name: Remove the custom personal gateway entry point
+      ansible.builtin.file:
+        path: /etc/systemd/system/hermes-gateway.service.d/single-zag.conf
+        state: absent
+    - name: Disable the retired classifier
+      ansible.builtin.systemd_service:
+        name: zag-router.service
+        enabled: false
+      when: "'zag-router.service' in ansible_facts.services"
+    - name: Start Zag through its original Hermes entry point
+      ansible.builtin.systemd_service:
+        name: hermes-gateway.service
+        state: started
+        daemon_reload: true
+
+- name: Return notify-only delivery to the incident service during Zig setup
+  hosts: incident_servers
+  gather_facts: false
+  tags: [restore]
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Return outbox delivery to its original non-agent transport
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import sqlite3
+            with sqlite3.connect('/var/lib/homelab-incidents/incidents.db') as db:
+                db.execute("DELETE FROM meta WHERE key='notification-transport'")
+      changed_when: true
+
+- name: Provision Zig's separate Matrix identity
+  hosts: pangolin
+  gather_facts: false
+  tags: [zig]
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Create the Zig Matrix account
+      ansible.builtin.command:
+        argv: [python3, /usr/local/libexec/provision-tuwunel-account, --homeserver, 'http://127.0.0.1:6167', --public-homeserver, 'https://matrix.homelab.example', --shared-secret-file, /etc/tuwunel/.registration_shared_secret, --username, zig, --display-name, Zig, --device-display-name, 'Zig profile', --output, /etc/zig-matrix.json]
+        creates: /etc/zig-matrix.json
+      no_log: true
+    - name: Read Zig's dedicated Matrix credential
+      ansible.builtin.slurp:
+        src: /etc/zig-matrix.json
+      register: zig_matrix
+      no_log: true
+    - name: Join Zig to the vulnerability room
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json
+            from pathlib import Path
+            from urllib import request,parse
+            account=json.loads(Path('/etc/zig-matrix.json').read_text())
+            room=Path('/etc/crowdsec-matrix-bridge/matrix-room-vulnerabilities').read_text().strip()
+            def call(path,token,payload=None):
+                req=request.Request('http://127.0.0.1:6167/_matrix/client/v3/'+path,data=json.dumps(payload).encode() if payload is not None else None,headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+                with request.urlopen(req,timeout=30) as r: return json.load(r)
+            if room not in call('joined_rooms',account['access_token'])['joined_rooms']:
+                inviter=Path('/etc/crowdsec-matrix-bridge/matrix-access-token').read_text().strip()
+                call('rooms/'+parse.quote(room,safe='')+'/invite',inviter,{'user_id':account['user_id']})
+                call('join/'+parse.quote(room,safe=''),account['access_token'],{})
+            print('Zig room membership verified')
+      changed_when: false
+
+- name: Keep Zig's Matrix credential out of the central incident service
+  hosts: incident_servers
+  gather_facts: false
+  tags: [zig]
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Remove the retired central Zig credential drop-in
+      ansible.builtin.file:
+        path: /etc/systemd/system/homelab-incidents.service.d/zig-delivery.conf
+        state: absent
+      register: zig_central_credential
+    - name: Restart incident delivery after removing central Zig access
+      ansible.builtin.systemd_service:
+        name: homelab-incidents.service
+        state: restarted
+        daemon_reload: true
+      when: zig_central_credential.changed
+
+- name: Install the native Zig profile and gateway
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  tags: [zig]
+  vars:
+    zig_home: "{{ homelab_investigation_execution.investigator_home }}/.hermes/profiles/zig"
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Create Zig's filesystem-isolated OS account
+      ansible.builtin.user:
+        name: "{{ homelab_investigation_execution.investigator_user }}"
+        system: true
+        home: "{{ homelab_investigation_execution.investigator_home }}"
+        shell: /usr/sbin/nologin
+        groups: "{{ homelab_investigation_execution.shared_group }}"
+        append: true
+    - name: Create Zig's private directories
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        owner: "{{ homelab_investigation_execution.investigator_user }}"
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0700'
+      loop:
+        - "{{ homelab_investigation_execution.investigator_home }}"
+        - "{{ homelab_investigation_execution.investigator_home }}/.hermes"
+        - /etc/zig
+    - name: Require the shared native Kanban home
+      ansible.builtin.file:
+        path: "{{ homelab_investigation_execution.kanban_root }}"
+        state: directory
+        owner: "{{ homelab_investigation_execution.controller_user }}"
+        group: "{{ homelab_investigation_execution.shared_group }}"
+        mode: '2770'
+    - name: Create a blank native profile without cloning Zag
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, -m, hermes_cli.main, profile, create, zig, --no-alias]
+        creates: '{{ zig_home }}'
+      become_user: "{{ homelab_investigation_execution.investigator_user }}"
+      environment:
+        HOME: "{{ homelab_investigation_execution.investigator_home }}"
+        HERMES_HOME: "{{ homelab_investigation_execution.investigator_home }}/.hermes"
+    - name: Set native profile metadata
+      ansible.builtin.copy:
+        dest: '{{ zig_home }}/profile.yaml'
+        owner: "{{ homelab_investigation_execution.investigator_user }}"
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0600'
+        content: |
+          display_name: Zig
+          description: Homelab vulnerability evidence and explicit bounded investigations
+    - name: Install only scoped incident credentials
+      ansible.builtin.copy:
+        src: /etc/zag-ops/secrets/operator.json
+        remote_src: true
+        dest: /etc/zig/incident.json
+        owner: "{{ homelab_investigation_execution.investigator_user }}"
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0600'
+      no_log: true
+    - name: Inspect Zig's scoped local model token
+      ansible.builtin.stat:
+        path: /etc/zig/model-key
+      register: zig_key_file
+    - name: Create Zig's scoped local model token
+      ansible.builtin.copy:
+        content: "{{ lookup('password','/dev/null length=64 chars=ascii_letters,digits') }}\n"
+        dest: /etc/zig/model-key
+        mode: '0600'
+      when: not zig_key_file.stat.exists
+      no_log: true
+    - name: Read Zig's scoped model token
+      ansible.builtin.slurp:
+        src: /etc/zig/model-key
+      register: zig_key
+      no_log: true
+    - name: Read Zag's current conversational settings and permitted web keys
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/hermes-agent/venv/bin/python
+          - -c
+          - |
+            import json,yaml
+            from pathlib import Path
+            from dotenv import dotenv_values
+            config=yaml.safe_load(Path('{{ homelab_investigation_execution.controller_home }}/.hermes/config.yaml').read_text())
+            env=dotenv_values('{{ homelab_investigation_execution.controller_home }}/.hermes/.env')
+            selected={key:config.get(key,{}) for key in ('model','agent','display','web','compression')}
+            selected['credentials']={key:env[key] for key in ('BRAVE_SEARCH_API_KEY','FIRECRAWL_API_KEY') if env.get(key)}
+            assert selected['model']['default']=='gpt-5.6-sol'
+            assert selected['credentials'].get('FIRECRAWL_API_KEY')
+            print(json.dumps(selected))
+      register: zig_baseline_read
+      changed_when: false
+      no_log: true
+    - name: Resolve the shared conversational baseline
+      ansible.builtin.set_fact:
+        zig_baseline: '{{ zig_baseline_read.stdout | from_json }}'
+      no_log: true
+    - name: Read Zag's SOUL without its memory or history
+      ansible.builtin.slurp:
+        src: "{{ homelab_investigation_execution.controller_home }}/.hermes/SOUL.md"
+      register: zig_shared_soul
+      no_log: true
+    - name: Install the provisioned-profile onboarding switch
+      ansible.builtin.script: ../roles/hermes_agent/files/configure_gateway_onboarding.py /usr/local/lib/hermes-agent/gateway/run.py
+      register: zig_onboarding_patch
+      changed_when: "'updated' in zig_onboarding_patch.stdout"
+    - name: Configure native profile behavior
+      ansible.builtin.copy:
+        dest: '{{ zig_home }}/config.yaml'
+        owner: root
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0640'
+        content: |
+          model:
+            default: gpt-5.6-sol
+            provider: custom:zig-model
+          custom_providers:
+            - name: zig-model
+              base_url: http://127.0.0.1:8792
+              api_mode: codex_responses
+              key_env: ZIG_MODEL_API_KEY
+          toolsets: [zig_incidents, kanban, terminal, file, web]
+          platform_toolsets:
+            matrix: [zig_incidents, kanban, terminal, file, web]
+          kanban:
+            dispatch_in_gateway: false
+            auto_decompose: false
+            auto_subscribe_on_create: false
+            review_dispatch: false
+          plugins:
+            enabled: [zig-incidents]
+          memory:
+            provider: ''
+            memory_enabled: false
+            user_profile_enabled: false
+          background_review:
+            enabled: false
+          compression: {{ zig_baseline.compression | to_json }}
+          display: {{ zig_baseline.display | combine({'interim_assistant_messages': false}, recursive=true) | to_json }}
+          onboarding:
+            enabled: false
+            profile_build: 'off'
+          web: {{ zig_baseline.web | to_json }}
+          tools:
+            tool_search:
+              enabled: 'off'
+          agent: {{ zig_baseline.agent | to_json }}
+          terminal:
+            cwd: {{ homelab_investigation_execution.investigator_home | to_json }}
+            home_mode: profile
+    - name: Give Zig Zag's SOUL with only the identity changed
+      ansible.builtin.copy:
+        dest: '{{ zig_home }}/SOUL.md'
+        owner: root
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0640'
+        content: "{{ (zig_shared_soul.content | b64decode) | replace('# Zag\n', '# Zig\n') | replace('You are Zag, short for Zagreus.', 'You are Zig, Zag’s investigation profile.') }}"
+      no_log: true
+    - name: Inspect the existing Matrix recovery key
+      ansible.builtin.stat:
+        path: '{{ zig_home }}/recovery-key'
+      register: zig_recovery_file
+    - name: Read the existing Matrix recovery key
+      ansible.builtin.slurp:
+        src: '{{ zig_home }}/recovery-key'
+      when: zig_recovery_file.stat.exists
+      register: zig_recovery
+      no_log: true
+    - name: Install profile-local credentials and preserve encryption recovery
+      ansible.builtin.copy:
+        dest: '{{ zig_home }}/.env'
+        owner: "{{ homelab_investigation_execution.investigator_user }}"
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0600'
+        content: |
+          ZIG_MODEL_API_KEY=zig-chat:{{ zig_key.content | b64decode | trim }}
+          {% for key,value in zig_baseline.credentials.items() %}
+          {{ key }}={{ value | to_json }}
+          {% endfor %}
+          MATRIX_HOMESERVER={{ (hostvars['pangolin'].zig_matrix.content | b64decode | from_json).homeserver }}
+          MATRIX_ACCESS_TOKEN={{ (hostvars['pangolin'].zig_matrix.content | b64decode | from_json).access_token }}
+          MATRIX_USER_ID={{ (hostvars['pangolin'].zig_matrix.content | b64decode | from_json).user_id }}
+          MATRIX_DEVICE_ID={{ (hostvars['pangolin'].zig_matrix.content | b64decode | from_json).device_id }}
+          MATRIX_ALLOWED_USERS=@operator:matrix.homelab.example
+          MATRIX_ALLOWED_ROOMS=!5JwKK2zosgeKhLrXTG:matrix.homelab.example
+          MATRIX_REQUIRE_MENTION=true
+          MATRIX_THREAD_REQUIRE_MENTION=true
+          MATRIX_PROCESS_NOTICES=false
+          MATRIX_ALLOW_ROOM_MENTIONS=false
+          MATRIX_REACTIONS=false
+          MATRIX_E2EE_MODE=required
+          MATRIX_RECOVERY_KEY_OUTPUT_FILE={{ zig_home }}/recovery-key
+          {% if zig_recovery_file.stat.exists %}
+          MATRIX_RECOVERY_KEY={{ zig_recovery.content | b64decode | trim }}
+          {% endif %}
+      no_log: true
+    - name: Create the native profile plugin directory
+      ansible.builtin.file:
+        path: '{{ zig_home }}/plugins/zig-incidents'
+        state: directory
+        owner: root
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0750'
+    - name: Install the native incident agent tools
+      ansible.builtin.copy:
+        src: ../roles/vulnerability_incidents/files/zig_incidents.py
+        dest: '{{ zig_home }}/plugins/zig-incidents/__init__.py'
+        owner: root
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0640'
+    - name: Install the passive native lifecycle publisher
+      ansible.builtin.copy:
+        src: ../roles/vulnerability_incidents/files/cve_native_publisher.py
+        dest: /usr/local/libexec/cve-native-publisher
+        owner: root
+        group: root
+        mode: '0755'
+    - name: Install the passive lifecycle publisher service
+      ansible.builtin.template:
+        src: ../roles/vulnerability_incidents/templates/cve-native-publisher.service.j2
+        dest: /etc/systemd/system/cve-native-publisher.service
+        mode: '0644'
+    - name: Install the passive lifecycle publisher timer
+      ansible.builtin.copy:
+        src: ../roles/vulnerability_incidents/files/cve-native-publisher.timer
+        dest: /etc/systemd/system/cve-native-publisher.timer
+        mode: '0644'
+    - name: Register the native incident plugin
+      ansible.builtin.copy:
+        dest: '{{ zig_home }}/plugins/zig-incidents/plugin.yaml'
+        owner: root
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0640'
+        content: |
+          name: zig-incidents
+          version: 2.0.0
+          description: Retained CVE lifecycle evidence and work records
+          provides_tools: [cve_lookup, cve_work_scope, cve_relationships, cve_evidence, cve_record_outcome, cve_propose_change, cve_repository_checkout, cve_create_pr]
+    - name: Create Zig's managed skill directory
+      ansible.builtin.file:
+        path: '{{ zig_home }}/skills/homelab-oncall'
+        state: directory
+        owner: root
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0750'
+    - name: Install the managed homelab on-call skill for Zig
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_service/files/hermes-skills/homelab-oncall/SKILL.md
+        dest: '{{ zig_home }}/skills/homelab-oncall/SKILL.md'
+        owner: root
+        group: "{{ homelab_investigation_execution.investigator_user }}"
+        mode: '0640'
+    - name: Install the native Zig profile verification
+      ansible.builtin.copy:
+        src: ../../scripts/verify_zig_profile.py
+        dest: /usr/local/lib/zag-ops/verify_zig_profile.py
+        owner: root
+        group: root
+        mode: '0644'
+    - name: Verify the native tools, passive board settings, and managed skill
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/lib/zag-ops/verify_zig_profile.py]
+      become_user: "{{ homelab_investigation_execution.investigator_user }}"
+      environment:
+        HOME: "{{ homelab_investigation_execution.investigator_home }}"
+        HERMES_HOME: '{{ zig_home }}'
+        HERMES_KANBAN_HOME: "{{ homelab_investigation_execution.kanban_root }}"
+        PYTHONPATH: /usr/local/lib/hermes-agent:/usr/local/lib/zag-ops
+      changed_when: false
+    - name: Install the native wake-subscription cleanup
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_service/files/remove_kanban_wake_subscriptions.py
+        dest: /usr/local/libexec/remove-kanban-wake-subscriptions
+        owner: root
+        group: root
+        mode: '0755'
+    - name: Remove existing Zig-board wake subscriptions through native storage
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/libexec/remove-kanban-wake-subscriptions]
+      become_user: "{{ homelab_investigation_execution.investigator_user }}"
+      environment:
+        HOME: "{{ homelab_investigation_execution.investigator_home }}"
+        HERMES_HOME: "{{ homelab_investigation_execution.investigator_home }}/.hermes"
+        HERMES_PROFILE: zig
+        HERMES_KANBAN_HOME: "{{ homelab_investigation_execution.kanban_root }}"
+      changed_when: "'removed 0' not in zig_wake_cleanup.stdout"
+      register: zig_wake_cleanup
+    - name: Remove existing shared-board wake subscriptions through native storage
+      ansible.builtin.command:
+        argv: [/usr/local/lib/hermes-agent/venv/bin/python, /usr/local/libexec/remove-kanban-wake-subscriptions]
+      become_user: "{{ homelab_investigation_execution.controller_user }}"
+      environment:
+        HOME: "{{ homelab_investigation_execution.controller_home }}"
+        HERMES_HOME: "{{ homelab_investigation_execution.controller_home }}/.hermes"
+        HERMES_KANBAN_HOME: "{{ homelab_investigation_execution.kanban_root }}"
+      changed_when: "'removed 0' not in zag_wake_cleanup.stdout"
+      register: zag_wake_cleanup
+    - name: Replace the classifier endpoint with scoped native profile access
+      ansible.builtin.copy:
+        src: '../roles/vulnerability_incidents/files/{{ item }}.py'
+        dest: '/usr/local/lib/zag-ops/{{ item }}.py'
+        mode: '0644'
+      loop: [zag_model_proxy, zig_chat_budget]
+    - name: Configure the model proxy's scoped profile credential
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/zag-model.service.d/zig.conf
+        mode: '0644'
+        content: |
+          [Service]
+          LoadCredential=zig-chat-key:/etc/zig/model-key
+          StateDirectory=zag-model
+          StateDirectoryMode=0700
+    - name: Remove the classifier's model credential dependency
+      ansible.builtin.file:
+        path: /etc/systemd/system/zag-model.service.d/router.conf
+        state: absent
+    - name: Install the native profile gateway service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/hermes-gateway-zig.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Zig native Hermes investigation profile
+          After=network-online.target zag-model.service homelab-repository-broker.service
+          Requires=zag-model.service homelab-repository-broker.service
+          [Service]
+          User={{ homelab_investigation_execution.investigator_user }}
+          Group={{ homelab_investigation_execution.investigator_user }}
+          SupplementaryGroups={{ homelab_investigation_execution.shared_group }}
+          WorkingDirectory={{ homelab_investigation_execution.investigator_home }}
+          Environment=HOME={{ homelab_investigation_execution.investigator_home }}
+          Environment=HERMES_HOME={{ homelab_investigation_execution.investigator_home }}/.hermes
+          Environment=HERMES_KANBAN_HOME={{ homelab_investigation_execution.kanban_root }}
+          Environment=PYTHONPATH=/usr/local/lib/hermes-agent:/usr/local/lib/zag-ops
+          Environment=HOMELAB_AGENT_CONFIG=/etc/homelab-investigator/targets.json
+          LoadCredential=homelab-observation-key:{{ homelab_investigation_execution.observation_key }}
+          Environment=HOMELAB_AGENT_KEY=%d/homelab-observation-key
+          Environment=HOMELAB_AGENT_KNOWN_HOSTS={{ homelab_investigation_execution.known_hosts }}
+          Environment=HERMES_SUPERVISED_CHILD=1
+          ExecStart=/usr/local/lib/hermes-agent/venv/bin/python -m hermes_cli.main -p zig gateway run
+          Restart=on-failure
+          RestartSec=10
+          NoNewPrivileges=yes
+          PrivateTmp=yes
+          PrivateDevices=yes
+          ProtectHome=yes
+          ProtectSystem=strict
+          InaccessiblePaths={{ homelab_investigation_execution.controller_home }} /var/lib/zag-ops /run/zag-model
+          ReadOnlyPaths=/etc/homelab-investigator
+          ReadWritePaths={{ homelab_investigation_execution.investigator_home }} {{ homelab_investigation_execution.kanban_root }} {{ homelab_investigation_execution.workspace_root }} {{ homelab_investigation_execution.artifact_cache }} {{ homelab_investigation_execution.repository_root }}
+          UMask=0007
+          MemoryMax=768M
+          TasksMax=64
+          [Install]
+          WantedBy=multi-user.target
+    - name: Install the observation credential identity check
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/zig-observation-credential-check.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Verify Zig can use only its delegated observation credential
+          After=network-online.target
+          Wants=network-online.target
+          [Service]
+          Type=oneshot
+          User={{ homelab_investigation_execution.investigator_user }}
+          Group={{ homelab_investigation_execution.investigator_user }}
+          SupplementaryGroups={{ homelab_investigation_execution.shared_group }}
+          Environment=HOMELAB_AGENT_CONFIG=/etc/homelab-investigator/targets.json
+          Environment=HOMELAB_AGENT_KEY=%d/homelab-observation-key
+          Environment=HOMELAB_AGENT_KNOWN_HOSTS={{ homelab_investigation_execution.known_hosts }}
+          LoadCredential=homelab-observation-key:{{ homelab_investigation_execution.observation_key }}
+          ExecStart=/usr/local/bin/homelab-agentctl observe hermes-agent list_processes {}
+          NoNewPrivileges=yes
+          PrivateTmp=yes
+          PrivateDevices=yes
+          ProtectHome=yes
+          ProtectSystem=strict
+          ReadOnlyPaths=/etc/homelab-investigator
+          RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+          MemoryMax=128M
+          TasksMax=16
+    - name: Verify one observation as Zig's actual service identity
+      ansible.builtin.systemd_service:
+        name: zig-observation-credential-check.service
+        state: started
+        daemon_reload: true
+    - name: Start the scoped model proxy and native Zig gateway
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        state: restarted
+        enabled: true
+        daemon_reload: true
+      loop: [zag-model.service, hermes-gateway-zig.service]
+    - name: Keep passive native lifecycle publication at the reviewed activation state
+      ansible.builtin.systemd_service:
+        name: cve-native-publisher.timer
+        state: "{{ 'started' if vulnerability_incidents_lifecycle_publish_enabled | default(false) | bool else 'stopped' }}"
+        enabled: "{{ vulnerability_incidents_lifecycle_publish_enabled | default(false) | bool }}"
+        daemon_reload: true
+    - name: Stop and disable the retired investigation runtimes
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        state: stopped
+        enabled: false
+        daemon_reload: true
+      loop: [zag-ops-worker.service, zig-investigation-replies.service]
+      failed_when: false
+    - name: Remove the retired investigation runtime units
+      ansible.builtin.file:
+        path: '/etc/systemd/system/{{ item }}'
+        state: absent
+      loop: [zag-ops-worker.service, zig-investigation-replies.service]
+    - name: Remove retired investigation runtime code
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+        - /usr/local/lib/zag-ops/zag_ops_worker.py
+        - /usr/local/lib/zig-replies
+    - name: Reload the service manager after retiring custom runtimes
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+- name: Remove the archived single-Zag runtime and retired bot transport
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  tags: [cleanup]
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Require restored Zag and the native Zig gateway
+      ansible.builtin.command:
+        argv: [systemctl, is-active, hermes-gateway.service, hermes-gateway-zig.service]
+      changed_when: false
+    - name: Remove personal Zag from the operational room without deleting history
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json
+            from pathlib import Path
+            from urllib import request,parse
+            c=json.loads(Path('{{ homelab_investigation_execution.controller_home }}/.hermes/secrets/matrix-account.json').read_text())
+            room='!5JwKK2zosgeKhLrXTG:matrix.homelab.example'
+            def call(path,payload=None):
+                req=request.Request(c['homeserver'].rstrip('/')+'/_matrix/client/v3/'+path,data=json.dumps(payload).encode() if payload is not None else None,headers={'Authorization':'Bearer '+c['access_token'],'Content-Type':'application/json'})
+                with request.urlopen(req,timeout=30) as r:return json.load(r)
+            if room in call('joined_rooms')['joined_rooms']:
+                call('rooms/'+parse.quote(room,safe='')+'/leave',{})
+            assert room not in call('joined_rooms')['joined_rooms']
+            print('Personal Zag is outside the vulnerability room; its DM account and history are unchanged.')
+      changed_when: false
+    - name: Preserve retired runtime state and credentials in the private migration archive
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import tarfile
+            from pathlib import Path
+            targets=['/etc/zag-router','/var/lib/zag-router','/var/lib/zag-matrix','/var/lib/zag-model/routing.db','/var/lib/zag-model/routing.db-wal','/var/lib/zag-model/routing.db-shm','/etc/zag-ops/gateway.json','/etc/zag-ops/secrets/matrix.json','/etc/systemd/system/zag-router.service','/etc/systemd/system/zag-ops-gateway.service']
+            targets += ['/usr/local/lib/zag-ops/'+n+'.py' for n in ['zag_single_gateway','zag_unified_router','zag_router_model','zag_ops_gateway']]
+            with tarfile.open('/var/backups/hermes-zig-migration-20260908/retired-runtime.tar.gz','w:gz') as archive:
+                for value in targets:
+                    if Path(value).exists(): archive.add(value,arcname=value.lstrip('/'))
+            print('Retired runtime archived; personal memory and incident records are untouched.')
+        creates: /var/backups/hermes-zig-migration-20260908/retired-runtime.tar.gz
+    - name: Inspect retired services
+      ansible.builtin.service_facts:
+    - name: Disable both obsolete gateway services
+      ansible.builtin.systemd_service:
+        name: '{{ item }}'
+        state: stopped
+        enabled: false
+      loop: [zag-router.service, zag-ops-gateway.service]
+      when: item in ansible_facts.services
+    - name: Remove archived runtime files and credentials
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+        - /etc/zag-router
+        - /var/lib/zag-router
+        - /var/lib/zag-matrix
+        - /var/lib/zag-model/routing.db
+        - /var/lib/zag-model/routing.db-wal
+        - /var/lib/zag-model/routing.db-shm
+        - /etc/zag-ops/gateway.json
+        - /etc/zag-ops/secrets/matrix.json
+        - /etc/systemd/system/zag-router.service
+        - /etc/systemd/system/zag-ops-gateway.service
+        - /usr/local/lib/zag-ops/zag_single_gateway.py
+        - /usr/local/lib/zag-ops/zag_unified_router.py
+        - /usr/local/lib/zag-ops/zag_router_model.py
+        - /usr/local/lib/zag-ops/zag_ops_gateway.py
+    - name: Find compiled copies of retired modules
+      ansible.builtin.find:
+        paths: /usr/local/lib/zag-ops/__pycache__
+        patterns: ['zag_single_gateway.*.pyc','zag_unified_router.*.pyc','zag_router_model.*.pyc','zag_ops_gateway.*.pyc']
+      register: retired_bytecode
+    - name: Find obsolete deployment backup variants
+      ansible.builtin.find:
+        paths: /usr/local/lib/zag-ops
+        patterns: ['zag_single_gateway.py.*~','zag_unified_router.py.*~','zag_router_model.py.*~','zag_ops_gateway.py.*~']
+      register: retired_variants
+    - name: Consolidate obsolete backup variants into the private archive
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json,sys,tarfile
+            from pathlib import Path
+            with tarfile.open('/var/backups/hermes-zig-migration-20260908/deployment-variants.tar','a') as archive:
+                for value in json.loads(sys.argv[1]):
+                    path=Path(value)
+                    assert path.parent==Path('/usr/local/lib/zag-ops') and path.is_file() and not path.is_symlink()
+                    archive.add(str(path),arcname=path.name)
+          - '{{ retired_variants.files | map(attribute="path") | list | to_json }}'
+      when: retired_variants.matched > 0
+    - name: Remove archived backup variants from the active code directory
+      ansible.builtin.file:
+        path: '{{ item.path }}'
+        state: absent
+      loop: '{{ retired_variants.files }}'
+      loop_control:
+        label: '{{ item.path }}'
+    - name: Remove compiled retired modules
+      ansible.builtin.file:
+        path: '{{ item.path }}'
+        state: absent
+      loop: '{{ retired_bytecode.files }}'
+      loop_control:
+        label: '{{ item.path }}'
+    - name: Remove unused service identities
+      ansible.builtin.user:
+        name: '{{ item }}'
+        state: absent
+      loop: [zag-router, zag-matrix]
+    - name: Remove the unused router transport group
+      ansible.builtin.group:
+        name: zag-transport
+        state: absent
+    - name: Reload the cleaned service inventory
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+- name: Remove retired bot credentials from active incident configuration
+  hosts: incident_servers
+  gather_facts: false
+  tags: [cleanup]
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Remove the retired bot's active configuration and helpers
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+        - /etc/homelab-incidents/zag-ops-matrix.json
+        - /usr/local/libexec/zag-matrix-membership
+        - /usr/local/lib/homelab-incidents/retire_zag_ops.py
+    - name: Remove the obsolete notification transport switch
+      ansible.builtin.command:
+        argv: [python3, -c, "import sqlite3; d=sqlite3.connect('/var/lib/homelab-incidents/incidents.db'); d.execute(\"DELETE FROM meta WHERE key='notification-transport'\"); d.commit()"]
+      changed_when: false

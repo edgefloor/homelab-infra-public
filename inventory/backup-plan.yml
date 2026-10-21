@@ -1,0 +1,259 @@
+---
+backup_plan:
+  zfs_dataset: data/backups
+  mount_path: /data/backups
+  proxmox_storage_id: data-backup
+  storage_content: [backup]
+  scheduled_jobs:
+    - id: managed-weekly
+      status: active
+      node: node1
+      lxc_ids: [200, 201, 202, 203, 204, 205, 206, 207, 210, 211, 212, 213, 214, 215, 216, 217]
+      schedule: 'sun 03:00'
+      mode: snapshot
+      compression: zstd
+      retention: keep-last=2
+      repeat_missed: true
+      bind_mounted_replaceable_data: excluded
+      excluded_guests: IDs below 200 remain intentionally outside this backup policy
+    - id: tuwunel-vps-weekly
+      status: active
+      source: 198.51.100.24
+      destination: /var/lib/tuwunel-backups on LXC 200
+      schedule: 'sun 00:30 UTC'
+      method: brief_offline_zstd_stream_over_forced_ssh_then_age_encryption
+      retention: keep-last=4
+      included_state: [tuwunel_database_and_media, tuwunel_config, matrix_rtc_config, matrix_alert_bridge, update_monitor_state]
+      destination_backup: included_in_managed-weekly_lxc_200_snapshot
+      failure_retry: every_15_minutes_up_to_3_starts_in_6_hours
+      receiver_deadline_minutes: 20
+      source_archive_deadline_minutes: 10
+      health_check: hourly_native_systemd_unit_with_eight_day_archive_age_limit
+  last_verified_run:
+    observed_at: '2026-10-20T01:16:33Z'
+    result: successful
+    archive_integrity: tuwunel_encrypted_home_copy_decrypted_and_passed_zstd_test
+    tuwunel_archive: tuwunel-20261018T003327Z.tar.zst.age
+    managed_weekly_run: '2026-10-18'
+    managed_weekly_task_result: OK
+    managed_guest_archives_present: 16
+    beszel_latest_daily_archive: beszel-20261019T014015Z.tar.gz
+    beszel_daily_backup_service_result: success
+  initial_guest_backups:
+    observed_at: '2026-10-17T20:11:48Z'
+    job_result: successful
+    archives_passed_zstd_integrity: true
+    guests:
+      - id: 216
+        archive: vzdump-lxc-216-2026_10_17-22_05_28.tar.zst
+        n8n_database_and_encryption_config_present: true
+      - id: 217
+        archive: vzdump-lxc-217-2026_10_17-22_06_55.tar.zst
+  health_monitoring:
+    observed_at: '2026-10-20T01:16:33Z'
+    tuwunel_backup_health: passed_timer_enabled
+    thinpool_health: passed_timer_enabled
+    schedule: hourly_with_up_to_five_minutes_jitter
+    alert_path: existing_beszel_systemd_failed_alerts
+    checks_modify_runtime_or_reset_failures: false
+  restore_tests:
+    lxc: passed_for_downloads_205_only
+    application_aware: filebrowser_beszel_n8n_and_pocket_id_passed_other_deployments_pending
+    n8n_retained_cold_backup:
+      observed_at: '2026-10-21T08:42:01Z'
+      source: /var/backups/n8n/cutover-20261020T013459Z-86f403d1/state/.n8n
+      installed_release_version: 2.43.8
+      database_sha256: 33d7dd2a51b14f752280e439d416e84e2960502b92aca056f61b1ece4488e4e5
+      recovered_owners: 1
+      recovered_workflows: 1
+      recovered_credentials: 2
+      wrong_key_rejected_by_native_decryption: true
+      correct_key_recovers_after_failure: true
+      readiness_http: 200
+      unauthenticated_workflow_access_http: 401
+      account_workflow_and_credential_content_preserved: true
+      retained_backup_and_production_unchanged: true
+      network: private_namespace_loopback_only
+      temporary_uid_with_no_groups_or_capabilities: true
+      workflows_unpublished_before_startup: true
+      disposable_account_and_runtime_removed: true
+      reinstall_from_empty_host: not_tested
+    pocket_id_rehearsal:
+      observed_at: '2026-10-20T01:20:18Z'
+      archive: vzdump-lxc-207-2026_10_18-03_10_04.tar.zst
+      archive_sha256: e02edad2ecf27366a191ee7322fa72db10a0e5c766cdb4166c5d64a4b9b36587
+      application_version: 2.14.0
+      sqlite_integrity: ok
+      native_health_path: /healthz
+      health_http_status: 204
+      oidc_discovery_http_status: 200
+      restored_users: 7
+      restored_oidc_clients: 7
+      restored_webauthn_credentials: 7
+      core_table_content_hashes_preserved: true
+      signing_keys_match_production: true
+      dedicated_temporary_uid: true
+      supplementary_groups_and_capabilities: none
+      production_state_configuration_and_process_access: denied
+      network: private_namespace_loopback_only
+      production_service_and_core_database_unchanged: true
+      disposable_account_and_runtime_removed: true
+      interactive_passkey_login_and_external_oidc_callbacks: not_tested
+    dependency_track_database_rehearsal:
+      observed_at: '2026-10-20T01:22:51Z'
+      archive: vzdump-lxc-214-2026_10_18-03_11_25.tar.zst
+      archive_sha256: 011e6a0d8cb405812bf0c99069116bd3adc76e6c72afe4876cc1f6cd3f45836d
+      postgres_version: '17.11'
+      recovery_complete: true
+      restored_public_tables: 111
+      restored_projects: 80
+      restored_components: 19586
+      complete_logical_export_validated: true
+      dedicated_temporary_uid: true
+      supplementary_groups_and_capabilities: none
+      production_data_configuration_and_process_access: denied
+      production_unix_socket_access: rejected_by_native_peer_authentication
+      network: private_namespace_loopback_only_with_no_tcp_listener
+      dependency_track_application_started: false
+      production_service_processes_unchanged: true
+      disposable_account_and_runtime_removed: true
+      application_startup_login_and_notification_behavior: not_tested
+    downloads_rehearsal:
+      observed_at: '2026-09-06T00:43:12+00:00'
+      archive: vzdump-lxc-205-2026_09_05-23_44_12.tar.zst
+      archive_sha256: dfb6dc98a4eb5a34f7842223609a30362bef62e693089fb2a322c5b9b3d20c00
+      application: File Browser v2.63.23/e8a388f8
+      database_present: true
+      health_http_status: 200
+      network: private_namespace_loopback_only
+      shared_mounts: removed_before_boot
+      disposable_guest_removed: true
+      failed_candidate_exit_status: 70
+      original_executable_restored: true
+      database_hash_preserved_during_failed_candidate: true
+      candidate_patch_compatibility: not_tested
+      shared_storage_restore: not_tested
+    beszel_rehearsal:
+      observed_at: '2026-10-17T20:09:57.888677+00:00'
+      archive: beszel-20261017T200955Z.tar.gz
+      archive_sha256: f314e2e77ec4b12d7e0a0823f51bdef1fe1d1e6abe202f8e9bf903e29223b20a
+      image_id: sha256:ac546f2b8320eef91049bd1b80350bd300aea49a4f92a1504dfafb2d49de6284
+      restored_system_count: 18
+      sqlite_integrity: ok
+      health_http_status: 200
+      network: private_namespace_loopback_only
+      production_container_unchanged: true
+      disposable_container_and_data_removed: true
+      candidate_patch_compatibility: not_tested
+      external_collection_and_identity_login: not_tested
+    n8n_rehearsal:
+      observed_at: '2026-10-17T20:37:07Z'
+      candidate_version: 2.43.7
+      candidate_lock_sha256: 7226d8976821dfaf0dab42bdcfb3cdd812057e716b1c14c8988c8d600cd7d284
+      sqlite_integrity: ok
+      health_http_status: 200
+      network: private_namespace_loopback_only
+      restored_owners: 1
+      restored_workflows: 1
+      decrypted_credentials: 2
+      schema_migrations_before: 277
+      schema_migrations_after: 291
+      account_workflow_credential_hashes_preserved: true
+      production_service_and_database_unchanged: true
+      disposable_workflows_unpublished: true
+      disposable_runtime_removed: true
+    n8n_isolation_rehearsal:
+      observed_at: '2026-10-17T20:47:36Z'
+      candidate_version: 2.43.7
+      isolation_checks_passed: 9
+      dedicated_temporary_uid: true
+      supplementary_groups_and_capabilities: none
+      production_state_configuration_and_process_access: denied
+      network: private_namespace_loopback_only
+      decrypted_credentials: 2
+      health_http_status: 200
+      production_service_and_database_unchanged: true
+      disposable_account_group_processes_and_runtime_removed: true
+    n8n_patch_rehearsal:
+      observed_at: '2026-10-20T01:28:53Z'
+      candidate_version: 2.43.8
+      candidate_lock_sha256: c8d5421f01da578e045310bb210178b0c7ba4f8d8bb88ba865942e54fa67bb15
+      candidate_manifest_sha256: a6e5d05a24e9c3cac59f32b2e7983b4a1ac00eae5eb16fc667c8db6ebc378737
+      backup: rehearsal-20261020T012853Z-7b1e18b8
+      backup_sha256: 7fe9e4fcf83283108f5cfb2be063418f988df81e7d0efc7dd3c3e874a5e3ae10
+      native_authentication_checks_passed: 14
+      isolation_checks_passed: 9
+      dedicated_temporary_uid: true
+      supplementary_groups_and_capabilities: none
+      production_state_configuration_and_process_access: denied
+      network: private_namespace_loopback_only
+      sqlite_integrity: ok
+      schema_migrations_before: 291
+      schema_migrations_after: 291
+      restored_owners: 1
+      restored_workflows: 1
+      decrypted_credentials: 2
+      health_http_status: 200
+      account_workflow_credential_hashes_preserved: true
+      disposable_workflows_unpublished: true
+      production_service_and_database_unchanged: true
+      disposable_account_group_processes_and_runtime_removed: true
+    n8n_cutover:
+      observed_at: '2026-10-20T01:37:09Z'
+      status: passed
+      version: 2.43.8
+      release: /opt/n8n/releases/2.43.8-c8d5421f01da578e
+      lock_sha256: c8d5421f01da578e045310bb210178b0c7ba4f8d8bb88ba865942e54fa67bb15
+      cold_backup: cutover-20261020T013459Z-86f403d1
+      complete_state_and_configuration_verified: true
+      health_http_status: 200
+      caddy_health_http_status: 200
+      sqlite_integrity: ok
+      schema_migrations: 291
+      owners_preserved: 1
+      active_workflows_preserved: 1
+      credentials_preserved: 2
+      account_workflow_credential_hashes_preserved: true
+      encryption_configuration_preserved: true
+      authentication_binding_except_version_unchanged: true
+      old_immutable_release_and_rollback_instructions_retained: true
+      rollback_requires_old_database_and_configuration: true
+  retired_cold_archives:
+    observed_at: '2026-10-20T01:31:17Z'
+    host: node1
+    directory: /data/backups/retired-cve/2026-10-20
+    access: root_only
+    retention: manual_no_automatic_expiry
+    contents: [lxc_201_retired_investigation_work, lxc_200_seven_encrypted_incident_archives]
+    compression_integrity_and_native_tar_comparison: passed
+    adjacent_sha256_and_verification_receipts: retained
+    original_guest_trees_removed_after_verification: true
+    reclaimed_guest_filesystem_gib: 19.61
+    personal_hermes_and_current_tuwunel_backups_unchanged: true
+  n8n_release_cleanup:
+    observed_at: '2026-10-20T01:43:37Z'
+    removed: [disposable_2_43_8_candidate, npm_build_cache]
+    reclaimed_guest_filesystem_gib: 3.47
+    guest_available_bytes: 27028185088
+    guest_trimmed_bytes: 28892405760
+    active_release_previous_release_and_cold_backup_preserved: true
+    production_pid_unchanged: 5395
+    health_http_status: 200
+    caddy_health_http_status: 200
+  storage:
+    observed_at: '2026-10-20T01:43:06Z'
+    local_lvm_data_percent: 67.06
+    local_lvm_metadata_percent: 2.81
+    volume_group_free_gib: 16
+    zfs_observed_at: '2026-10-20T01:32:08Z'
+    zfs_pool_health: ONLINE
+    zfs_pool_used_percent: 74
+    backup_dataset_used_gib: 120.4
+    backup_dataset_available_tib: 2.18
+    thin_pool_device: pve/data
+    thin_pool_autoextend_threshold_percent: 80
+    thin_pool_autoextend_percent: 3
+    thin_pool_health_data_percent: 80
+    thin_pool_health_metadata_percent: 80
+    thin_pool_minimum_vg_reserve_gib: 5
+    action: monitor_capacity_and_plan_space_before_a_second_automatic_extension

@@ -1,0 +1,157 @@
+---
+- name: Read incident service credentials for the bounded investigation backend
+  hosts: incident_servers
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Read scoped service credentials
+      ansible.builtin.slurp:
+        src: /etc/homelab-incidents/credentials.json
+      register: zag_incident_credentials_raw
+      no_log: true
+    - name: Retain scoped credentials for deployment
+      ansible.builtin.set_fact:
+        zag_incident_credentials: "{{ zag_incident_credentials_raw.content | b64decode | from_json }}"
+      no_log: true
+
+- name: Maintain Zig's scoped model and broker clients
+  hosts: hermes_agents
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Create isolated operational service accounts
+      ansible.builtin.user:
+        name: "{{ item }}"
+        system: true
+        home: "/var/lib/{{ item }}"
+        shell: /usr/sbin/nologin
+      loop: [zag-ops, zag-model]
+    - name: Create isolated operational state and configuration
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /usr/local/lib/zag-ops, owner: root, mode: '0755'}
+        - {path: /etc/zag-ops, owner: root, mode: '0755'}
+        - {path: /etc/zag-ops/secrets, owner: root, mode: '0700'}
+        - {path: /var/lib/zag-ops, owner: zag-ops, mode: '0700'}
+        - {path: /var/lib/zag-ops/.hermes, owner: zag-ops, mode: '0700'}
+    - name: Install the operational service code
+      ansible.builtin.copy:
+        src: "../roles/vulnerability_incidents/files/{{ item }}.py"
+        dest: "/usr/local/lib/zag-ops/{{ item }}.py"
+        mode: '0644'
+      loop: [incident_client, zig_chat_budget, zag_model_proxy, zag_model_access]
+      register: zag_ops_code
+    - name: Install independently scoped service credentials
+      ansible.builtin.copy:
+        content: "{{ hostvars[groups['incident_servers'][0]].zag_incident_credentials[item] | combine({'url': 'https://matrix.homelab.example/_crowdsec/webhook'}) | to_json }}\n"
+        dest: "/etc/zag-ops/secrets/{{ item }}.json"
+        mode: '0600'
+      loop: [operator, reader]
+      no_log: true
+    - name: Disable every memory path in the clean operational profile
+      ansible.builtin.copy:
+        content: |
+          memory:
+            provider: ''
+            memory_enabled: false
+            user_profile_enabled: false
+          compression:
+            enabled: false
+          tools:
+            tool_search:
+              enabled: 'off'
+          agent:
+            max_turns: 20
+          model:
+            default: gpt-5.6-sol
+          background_review:
+            enabled: false
+        dest: /var/lib/zag-ops/.hermes/config.yaml
+        owner: root
+        group: zag-ops
+        mode: '0640'
+    - name: Copy only bounded evidence credentials and public target configuration
+      ansible.builtin.copy:
+        src: "{{ item.source }}"
+        dest: "/etc/zag-ops/{{ item.name }}"
+        remote_src: true
+        owner: root
+        group: zag-ops
+        mode: '0640'
+      loop:
+        - {source: /var/lib/homelab-investigator/.ssh/id_ed25519, name: evidence-key}
+        - {source: /var/lib/homelab-investigator/.ssh/known_hosts, name: known-hosts}
+        - {source: /etc/homelab-investigator/targets.json, name: targets.json}
+      no_log: true
+    - name: Install configurable bounded evidence client
+      ansible.builtin.copy:
+        src: ../roles/homelab_agent_service/files/homelab_agentctl.py
+        dest: /usr/local/bin/homelab-agentctl
+        mode: '0755'
+    - name: Install operational service units
+      ansible.builtin.copy:
+        src: "../roles/vulnerability_incidents/files/{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: '0644'
+      loop: [zag-model.service, zag-model-access.service, zag-model-access.timer]
+      register: zag_ops_units
+    - name: Create protected model-access runtime directory
+      ansible.builtin.file:
+        path: /run/zag-model
+        state: directory
+        owner: root
+        group: zag-model
+        mode: '0750'
+    - name: Install model-access runtime directory policy
+      ansible.builtin.copy:
+        content: "d /run/zag-model 0750 root zag-model -\n"
+        dest: /etc/tmpfiles.d/zag-model.conf
+        mode: '0644'
+    - name: Start the model-access refresh timer
+      ansible.builtin.systemd_service:
+        name: zag-model-access.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+    - name: Export the existing model access token without its refresh token
+      ansible.builtin.systemd_service:
+        name: zag-model-access.service
+        state: started
+    - name: Remove the retired worker writing rules
+      ansible.builtin.file:
+        dest: /etc/zag-ops/writing-style.md
+        state: absent
+    - name: Start isolated operational services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: "{{ 'restarted' if zag_ops_code.changed or zag_ops_units.changed else 'started' }}"
+        daemon_reload: true
+      loop: [zag-model.service]
+    - name: Retire the custom investigation worker
+      ansible.builtin.systemd_service:
+        name: zag-ops-worker.service
+        enabled: false
+        state: stopped
+      failed_when: false
+    - name: Remove the custom investigation worker runtime
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+        - /usr/local/lib/zag-ops/zag_ops_worker.py
+        - /etc/systemd/system/zag-ops-worker.service

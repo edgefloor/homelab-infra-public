@@ -1,0 +1,14 @@
+---
+- name: Configure internal DNS and network operations
+  hosts: network_ops
+  become: true
+  vars_files:
+    - ../../inventory/routes.yml
+  tasks:
+    - ansible.builtin.include_tasks: tasks/provision-with-cve-cycle.yml
+      vars:
+        cve_provisioning_roles: [common_baseline, coredns, cloudflare_ddns]
+        cve_provisioning_installations:
+          - "deployment:coredns"
+          - "deployment:cloudflare-ddns"
+          - "binary:/usr/local/bin/coredns"

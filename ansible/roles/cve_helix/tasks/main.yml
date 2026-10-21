@@ -1,0 +1,106 @@
+---
+- name: Require explicit opt-in to the retired custom CVE pipeline
+  ansible.builtin.import_role:
+    name: legacy_cve_guard
+  tags: [always]
+
+- name: Install the Helix container runtime and LAN firewall
+  ansible.builtin.apt:
+    name: [docker.io, nftables]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable the container runtime
+  ansible.builtin.systemd_service:
+    name: docker.service
+    enabled: true
+    state: started
+
+- name: Inspect the staged pinned Helix image
+  ansible.builtin.command:
+    argv: [docker, image, inspect, "{{ cve_helix_image }}"]
+  register: cve_helix_image_inspection
+  changed_when: false
+  failed_when: false
+
+- name: Inspect the pinned Helix image archive
+  ansible.builtin.stat:
+    path: "{{ cve_helix_image_archive }}"
+  register: cve_helix_image_archive_state
+  when: cve_helix_image_inspection.rc != 0
+
+- name: Require the verified image or its transfer archive
+  ansible.builtin.assert:
+    that: cve_helix_image_archive_state.stat.exists | default(false)
+    fail_msg: "Stage {{ cve_helix_image_archive }} before the first Helix deployment."
+  when: cve_helix_image_inspection.rc != 0
+
+- name: Load the pinned Helix image archive
+  ansible.builtin.command:
+    argv: [docker, image, load, --input, "{{ cve_helix_image_archive }}"]
+  when: cve_helix_image_inspection.rc != 0
+
+- name: Read the pinned Helix image identity
+  ansible.builtin.command:
+    argv: [docker, image, inspect, "{{ cve_helix_image }}"]
+  register: cve_helix_image_inspection
+  changed_when: false
+
+- name: Select the immutable staged image
+  ansible.builtin.set_fact:
+    cve_helix_image_id: "{{ (cve_helix_image_inspection.stdout | from_json | first).Id }}"
+
+- name: Create persistent Helix object storage
+  ansible.builtin.file:
+    path: "{{ cve_helix_data_directory }}"
+    state: directory
+    owner: '65532'
+    group: '65532'
+    mode: '0700'
+
+- name: Install the LAN-only Helix firewall
+  ansible.builtin.template:
+    src: helix-cve.nft.j2
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: '0644'
+  register: cve_helix_firewall
+
+- name: Enable the LAN-only Helix firewall
+  ansible.builtin.systemd_service:
+    name: nftables.service
+    enabled: true
+    state: "{{ 'restarted' if cve_helix_firewall.changed else 'started' }}"
+
+- name: Install the local Helix service
+  ansible.builtin.template:
+    src: helix-cve.service.j2
+    dest: /etc/systemd/system/helix-cve.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: cve_helix_unit
+
+- name: Start persistent Helix
+  ansible.builtin.systemd_service:
+    name: helix-cve.service
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if cve_helix_unit.changed else 'started' }}"
+
+- name: Verify the Helix listener
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ cve_helix_http_port }}/healthz"
+  register: cve_helix_health
+  until: cve_helix_health.status == 200
+  retries: 15
+  delay: 2
+
+- name: Verify that Helix is bound on the LAN listener
+  ansible.builtin.command:
+    argv: [ss, -H, -ltn, "sport = :{{ cve_helix_http_port }}"]
+  register: cve_helix_listener
+  changed_when: false
+  failed_when: "('0.0.0.0:' + (cve_helix_http_port | string)) not in cve_helix_listener.stdout"

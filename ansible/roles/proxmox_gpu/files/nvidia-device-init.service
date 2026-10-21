@@ -1,0 +1,18 @@
+[Unit]
+Description=Initialize NVIDIA device nodes before Proxmox guests
+After=local-fs.target
+Before=pve-guests.service
+
+[Service]
+Type=oneshot
+# Unified-memory mode creates UVM devices instead of the core GPU devices.
+ExecStart=/usr/bin/nvidia-modprobe -c 0 -c 255
+ExecStart=/usr/bin/nvidia-modprobe -u -c 0
+ExecStartPost=/usr/bin/test -c /dev/nvidia0
+ExecStartPost=/usr/bin/test -c /dev/nvidiactl
+ExecStartPost=/usr/bin/test -c /dev/nvidia-uvm
+ExecStartPost=/usr/bin/test -c /dev/nvidia-uvm-tools
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

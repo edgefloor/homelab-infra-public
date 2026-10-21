@@ -1,0 +1,28 @@
+[Unit]
+Description=Independently check CVE scan failures and freshness
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment="UPDATE_MONITOR_SYSTEM_NAME={{ update_monitor_system_name }}"
+Environment="UPDATE_MONITOR_WEBHOOK_URL={{ update_monitor_webhook_url }}"
+ExecStart=/usr/local/libexec/homelab-scan-watchdog --state {{ update_monitor_state_dir }}/cve-state.json
+LoadCredential=webhook-secret:{{ update_monitor_credentials_dir }}/webhook-secret
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths={{ update_monitor_state_dir }}
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+UMask=0077
+TimeoutStartSec=90s

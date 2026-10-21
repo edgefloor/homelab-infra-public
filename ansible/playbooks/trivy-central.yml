@@ -1,0 +1,124 @@
+---
+- name: Start the shared vulnerability database before migrating clients
+  hosts: pangolin
+  become: true
+  gather_facts: false
+  roles:
+    - trivy_server
+  tasks:
+    - name: Load existing edge configuration defaults
+      ansible.builtin.include_vars: ../roles/pangolin/defaults/main.yml
+      tags: [trivy-firewall, trivy-route]
+    - name: Allow the edge proxy to reach the bridge-bound matcher
+      ansible.builtin.template:
+        src: ../roles/pangolin/templates/nftables.conf.j2
+        dest: /etc/nftables.conf
+        mode: '0644'
+        validate: /usr/sbin/nft -c -f %s
+        backup: true
+      register: trivy_firewall
+      tags: [trivy-firewall]
+    - name: Apply the scoped host firewall without changing Docker NAT
+      ansible.builtin.command:
+        argv: [/usr/sbin/nft, add, rule, inet, homelab_filter, input, iifname, '"br-*"', ip, daddr, 172.30.0.1, tcp, dport, '4954', accept]
+      when: trivy_firewall.changed
+      tags: [trivy-firewall]
+    - name: Add the authenticated Trivy HTTPS route to the existing edge
+      ansible.builtin.template:
+        src: ../roles/pangolin/templates/dynamic_config.yml.j2
+        dest: /opt/pangolin/config/traefik/dynamic_config.yml
+        mode: '0644'
+        backup: true
+      tags: [trivy-route]
+    - name: Verify public TLS routing
+      ansible.builtin.uri:
+        url: https://matrix.homelab.example/_trivy/healthz
+        return_content: true
+      register: trivy_edge_health
+      until: trivy_edge_health.status == 200 and trivy_edge_health.content == 'ok'
+      retries: 15
+      delay: 2
+    - name: Verify unauthenticated RPC requests are rejected
+      ansible.builtin.uri:
+        url: https://matrix.homelab.example/_trivy/twirp/trivy.scanner.v1.Scanner/Scan
+        method: POST
+        body_format: json
+        body: {}
+        status_code: 401
+
+- name: Move enrolled hosts to the shared database
+  hosts: beszel_agents:plan_runners
+  become: true
+  gather_facts: false
+  serial: [1, 3]
+  tasks:
+    - name: Migrate legacy scanner clients only after explicit opt-in
+      when: homelab_legacy_cve_enabled | default(false) | bool
+      block:
+        - name: Wait for an existing scheduled scan before changing its client
+          ansible.builtin.command: systemctl is-active homelab-cve-monitor.service
+          register: trivy_existing_scan
+          changed_when: false
+          failed_when: false
+          until: trivy_existing_scan.stdout not in ['active', 'activating']
+          retries: 120
+          delay: 10
+        - name: Configure authenticated remote matching
+          ansible.builtin.include_role:
+            name: update_monitor
+            tasks_from: trivy_client
+        - name: Install the fail-closed scanner
+          ansible.builtin.copy:
+            src: ../roles/update_monitor/files/homelab_cve_monitor.py
+            dest: /usr/local/libexec/homelab-cve-monitor
+            mode: '0755'
+        - name: Prove OS and local image scanning works with a database-free client
+          ansible.builtin.command:
+            argv:
+              - /usr/local/libexec/homelab-cve-monitor
+              - --trivy
+              - /usr/local/bin/trivy
+              - --state
+              - /var/lib/homelab-update-monitor/trivy-migration.json
+              - --cache
+              - /var/cache/homelab-trivy-client-check
+              - --snapshot-only
+          async: 1800
+          poll: 5
+          changed_when: false
+        - name: Confirm the client did not download the vulnerability database
+          ansible.builtin.stat:
+            path: /var/cache/homelab-trivy-client-check/db/trivy.db
+          register: trivy_client_db
+        - name: Require database-free scanning before removing the obsolete copy
+          ansible.builtin.assert:
+            that: not trivy_client_db.stat.exists
+        - name: Check whether an obsolete database remains
+          ansible.builtin.stat:
+            path: /var/cache/homelab-update-monitor/trivy/db
+          register: trivy_old_db
+        - name: Remove only the obsolete re-downloadable vulnerability database
+          ansible.builtin.command:
+            argv: [/usr/local/bin/trivy, clean, --cache-dir, /var/cache/homelab-update-monitor/trivy, --vuln-db]
+          changed_when: true
+          when: trivy_old_db.stat.exists
+
+- name: Monitor central database freshness without invoking an agent
+  hosts: network-ops
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Install the shared matcher freshness check
+      ansible.builtin.copy:
+        src: ../roles/trivy_server/files/trivy_health.py
+        dest: /usr/local/libexec/trivy_health.py
+        mode: '0644'
+    - name: Include matcher health in the existing off-host health timer
+      ansible.builtin.copy:
+        src: ../roles/vulnerability_incidents/files/incident_health.py
+        dest: /usr/local/libexec/incident_health.py
+        mode: '0644'
+      when: homelab_legacy_cve_enabled | default(false) | bool
+    - name: Check the live database without sending a test notification
+      ansible.builtin.command: /usr/bin/python3 /usr/local/libexec/trivy_health.py
+      changed_when: false

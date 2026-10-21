@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Install the Mac exposure proxy and its agent-facing command."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import plistlib
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+MAC_ADDRESS = "10.42.0.51"
+NEWT_ADDRESS = "10.42.0.210"
+PROXY_PORT = 8090
+LABEL = "fun.example.exposure-proxy"
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "scripts" / "expose.py"
+SUPPORT = Path.home() / "Library" / "Application Support" / "homelab-exposure"
+BIN = Path.home() / ".local" / "bin"
+LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
+
+
+def run(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, check=check, text=True, capture_output=True)
+
+
+def mac_has_fixed_address() -> bool:
+    completed = run(["/usr/sbin/ipconfig", "getifaddr", "en1"], check=False)
+    return completed.returncode == 0 and completed.stdout.strip() == MAC_ADDRESS
+
+
+def install_caddy() -> Path:
+    existing = shutil.which("caddy")
+    if existing:
+        return Path(existing)
+    brew = shutil.which("brew") or "/opt/homebrew/bin/brew"
+    if not Path(brew).is_file():
+        raise RuntimeError("Homebrew is required to install Caddy")
+    completed = run([brew, "install", "caddy"], check=False)
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "Homebrew could not install Caddy")
+    installed = shutil.which("caddy") or "/opt/homebrew/bin/caddy"
+    if not Path(installed).is_file():
+        raise RuntimeError("Caddy was installed but its binary was not found")
+    return Path(installed)
+
+
+def write_files(caddy: Path, api_key: str | None) -> tuple[Path, Path]:
+    SUPPORT.mkdir(parents=True, exist_ok=True)
+    BIN.mkdir(parents=True, exist_ok=True)
+    LAUNCH_AGENTS.mkdir(parents=True, exist_ok=True)
+
+    command = BIN / "expose"
+    shutil.copyfile(SOURCE, command)
+    command.chmod(0o755)
+
+    caddyfile = SUPPORT / "Caddyfile"
+    state_file = SUPPORT / "state.json"
+    if not caddyfile.exists() or not state_file.exists():
+        caddyfile.write_text(
+            "{\n\tauto_https off\n\tadmin 127.0.0.1:2019\n}\n\n"
+            f"http://:{PROXY_PORT} {{\n"
+            f"\tbind {MAC_ADDRESS}\n"
+            '\trespond "No active exposure" 404\n}\n',
+            encoding="utf-8",
+        )
+        caddyfile.chmod(0o600)
+
+    api_key_file = SUPPORT / "pangolin-api-key"
+    config = {
+        "org_id": "homelab",
+        "domain_id": "domain1",
+        "site_id": 1,
+        "role_ids": [3],
+        "idp_id": 1,
+        "base_domain": "homelab.example",
+        "proxy_address": MAC_ADDRESS,
+        "proxy_port": PROXY_PORT,
+        "newt_address": NEWT_ADDRESS,
+        "ssh_host": "root@198.51.100.24",
+        "caddy_binary": str(caddy),
+        "caddyfile": str(caddyfile),
+        "state_file": str(state_file),
+        "api_key_file": str(api_key_file),
+    }
+    config_file = SUPPORT / "config.json"
+    config_file.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    config_file.chmod(0o600)
+    if api_key:
+        api_key_file.write_text(api_key.strip() + "\n", encoding="utf-8")
+        api_key_file.chmod(0o600)
+
+    plist_file = LAUNCH_AGENTS / f"{LABEL}.plist"
+    plist = {
+        "Label": LABEL,
+        "ProgramArguments": [str(caddy), "run", "--config", str(caddyfile), "--adapter", "caddyfile"],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ProcessType": "Interactive",
+        "StandardOutPath": str(SUPPORT / "caddy.log"),
+        "StandardErrorPath": str(SUPPORT / "caddy.err.log"),
+    }
+    with plist_file.open("wb") as stream:
+        plistlib.dump(plist, stream, sort_keys=True)
+    plist_file.chmod(0o600)
+    return plist_file, command
+
+
+def start(plist_file: Path) -> None:
+    domain = f"gui/{os.getuid()}"
+    run(["/bin/launchctl", "bootout", domain, str(plist_file)], check=False)
+    completed = run(["/bin/launchctl", "bootstrap", domain, str(plist_file)], check=False)
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "launchd could not start the exposure proxy")
+    run(["/bin/launchctl", "kickstart", "-k", f"{domain}/{LABEL}"])
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--api-key", default=os.environ.get("PANGOLIN_EXPOSURE_API_KEY"))
+    args = parser.parse_args()
+    try:
+        if sys.platform != "darwin":
+            raise RuntimeError("this installer only supports macOS")
+        if not mac_has_fixed_address():
+            raise RuntimeError(f"en1 must have the fixed address {MAC_ADDRESS}")
+        caddy = install_caddy()
+        plist_file, command = write_files(caddy, args.api_key)
+        start(plist_file)
+        for attempt in range(30):
+            try:
+                socket.create_connection((MAC_ADDRESS, PROXY_PORT), timeout=1).close()
+                break
+            except OSError:
+                if attempt == 29:
+                    raise
+                time.sleep(0.1)
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
+        print(f"install_mac_exposure_proxy: {exc}", file=sys.stderr)
+        return 1
+    print(f"installed {command}")
+    if not (SUPPORT / "pangolin-api-key").is_file():
+        print(f"Pangolin API key still needs to be written to {SUPPORT / 'pangolin-api-key'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

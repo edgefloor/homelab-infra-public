@@ -1,0 +1,110 @@
+---
+- name: Verify the Pangolin frontend network exists
+  ansible.builtin.command:
+    cmd: docker network inspect pangolin_frontend
+  changed_when: false
+
+- name: Create Beszel directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ beszel_install_dir }}", mode: '0750' }
+    - { path: "{{ beszel_data_dir }}", mode: '0700' }
+    - { path: "{{ beszel_backup_dir }}", mode: '0700' }
+
+- name: Install the Beszel Compose definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ beszel_install_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: '0640'
+  register: beszel_compose
+
+- name: Install the Beszel backup script
+  ansible.builtin.template:
+    src: beszel-backup.sh.j2
+    dest: /usr/local/sbin/beszel-backup
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Install the Beszel backup service
+  ansible.builtin.template:
+    src: beszel-backup.service.j2
+    dest: /etc/systemd/system/beszel-backup.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: beszel_backup_service
+
+- name: Install the Beszel backup timer
+  ansible.builtin.template:
+    src: beszel-backup.timer.j2
+    dest: /etc/systemd/system/beszel-backup.timer
+    owner: root
+    group: root
+    mode: '0644'
+  register: beszel_backup_timer
+
+- name: Reload systemd for Beszel backup unit changes
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: beszel_backup_service.changed or beszel_backup_timer.changed
+
+- name: Enable the Beszel backup timer
+  ansible.builtin.systemd_service:
+    name: beszel-backup.timer
+    enabled: true
+    state: started
+
+- name: Pull the pinned Beszel image
+  ansible.builtin.command:
+    cmd: docker compose pull --quiet
+    chdir: "{{ beszel_install_dir }}"
+  changed_when: false
+
+- name: Start the Beszel Hub
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: "{{ beszel_install_dir }}"
+  register: beszel_compose_up
+  changed_when: >-
+    'Created' in beszel_compose_up.stderr or
+    'Recreated' in beszel_compose_up.stderr or
+    'Started' in beszel_compose_up.stderr
+
+- name: Wait for the Beszel Hub health endpoint
+  ansible.builtin.command:
+    cmd: docker exec beszel /beszel health --url http://127.0.0.1:8090
+  register: beszel_health
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: beszel_health.rc == 0
+
+- name: Inspect the Beszel container exposure
+  ansible.builtin.command:
+    cmd: docker inspect beszel
+  register: beszel_inspect
+  changed_when: false
+
+- name: Verify Beszel has no published host ports
+  ansible.builtin.assert:
+    that:
+      - (beszel_inspect.stdout | from_json)[0].HostConfig.PortBindings in [None, {}]
+      - "'pangolin_frontend' in (beszel_inspect.stdout | from_json)[0].NetworkSettings.Networks"
+    fail_msg: Beszel must be reachable only from the Pangolin frontend network
+
+- name: Verify Beszel uses OIDC-only browser authentication
+  ansible.builtin.assert:
+    that:
+      - "'DISABLE_PASSWORD_AUTH=true' in (beszel_inspect.stdout | from_json)[0].Config.Env"
+      - >-
+        ((beszel_inspect.stdout | from_json)[0].Config.Env |
+        select('match', '^TRUSTED_AUTH_HEADER=') | list | length) == 0
+    fail_msg: Beszel must disable password and trusted-header browser authentication

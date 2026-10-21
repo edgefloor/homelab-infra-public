@@ -1,0 +1,194 @@
+---
+- name: Require explicit opt-in to the retired custom CVE pipeline
+  ansible.builtin.import_role:
+    name: legacy_cve_guard
+  tags: [always]
+
+- name: Prepare the off-host incident backup receiver
+  when: incident_backup_mode == 'receiver_prepare'
+  block:
+    - name: Install receiver dependencies
+      ansible.builtin.apt:
+        name: [age, openssh-client, python3, zstd]
+        state: present
+        update_cache: false
+
+    - name: Create receiver directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - "{{ incident_backup_receiver_dir }}"
+        - "{{ incident_backup_receiver_config_dir }}"
+
+    - name: Generate the dedicated transport key
+      ansible.builtin.command:
+        argv: [ssh-keygen, -q, -t, ed25519, -N, '', -C, incident-backup@plan-runner, -f, "{{ incident_backup_receiver_config_dir }}/id_ed25519"]
+        creates: "{{ incident_backup_receiver_config_dir }}/id_ed25519"
+
+    - name: Generate the backup encryption identity
+      ansible.builtin.command:
+        argv: [age-keygen, -o, "{{ incident_backup_receiver_config_dir }}/age-identity.txt"]
+        creates: "{{ incident_backup_receiver_config_dir }}/age-identity.txt"
+
+    - name: Derive the backup encryption recipient
+      ansible.builtin.command:
+        argv: [age-keygen, -y, "{{ incident_backup_receiver_config_dir }}/age-identity.txt"]
+      register: incident_backup_age_recipient
+      changed_when: false
+
+    - name: Store the backup encryption recipient
+      ansible.builtin.copy:
+        content: "{{ incident_backup_age_recipient.stdout }}\n"
+        dest: "{{ incident_backup_receiver_config_dir }}/age-recipient.txt"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Read the transport public key
+      ansible.builtin.slurp:
+        src: "{{ incident_backup_receiver_config_dir }}/id_ed25519.pub"
+      register: incident_backup_public_key_file
+
+    - name: Publish the transport public key
+      ansible.builtin.set_fact:
+        incident_backup_receiver_public_key: "{{ incident_backup_public_key_file.content | b64decode | trim }}"
+
+- name: Configure an incident backup source
+  when: incident_backup_mode in ['incident_source', 'helix_source']
+  block:
+    - name: Install source export dependencies
+      ansible.builtin.apt:
+        name: [openssh-server, zstd]
+        state: present
+        update_cache: false
+
+    - name: Require the receiver public key
+      ansible.builtin.assert:
+        that: incident_backup_receiver_public_key is match('^ssh-ed25519 ')
+        fail_msg: The dedicated incident backup receiver public key is required.
+
+    - name: Install the bounded export command
+      ansible.builtin.template:
+        src: "{{ incident_backup_mode | replace('_source', '') }}-backup-export.sh.j2"
+        dest: /usr/local/sbin/homelab-incident-backup-export
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Ensure the root SSH directory exists
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Ensure the root authorized-key file exists
+      ansible.builtin.file:
+        path: /root/.ssh/authorized_keys
+        state: touch
+        owner: root
+        group: root
+        mode: '0600'
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Authorize only the incident backup export
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        regexp: 'incident-backup@plan-runner$'
+        line: >-
+          restrict,command="/usr/local/sbin/homelab-incident-backup-export"
+          {{ incident_backup_receiver_public_key }}
+
+    - name: Read the source SSH host key
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: incident_backup_source_host_key_file
+
+    - name: Publish the source SSH host key
+      ansible.builtin.set_fact:
+        incident_backup_source_host_key: "{{ incident_backup_source_host_key_file.content | b64decode | trim }}"
+
+- name: Install the off-host incident backup receiver
+  when: incident_backup_mode == 'receiver_install'
+  block:
+    - name: Validate the configured backup sources
+      ansible.builtin.assert:
+        that:
+          - item.name is match('^[A-Za-z0-9_-]+$')
+          - item.host | length > 0
+          - item.host_key is match('^ssh-ed25519 ')
+          - incident_backup_sources | map(attribute='name') | unique | length == incident_backup_sources | length
+        fail_msg: Backup sources need distinct safe names and pinned host keys.
+      loop: "{{ incident_backup_sources }}"
+
+    - name: Pin configured source host keys
+      ansible.builtin.copy:
+        content: |
+          {% for source in incident_backup_sources %}
+          {{ source.host }} {{ source.host_key }}
+          {% endfor %}
+        dest: "{{ incident_backup_receiver_config_dir }}/known_hosts"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Create the backup helper directory
+      ansible.builtin.file:
+        path: /usr/local/libexec
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install bounded backup storage and verification
+      ansible.builtin.copy:
+        src: backup_limits.py
+        dest: /usr/local/libexec/homelab-backup-limits
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Install the backup receiver
+      ansible.builtin.template:
+        src: incident-backup-receive.sh.j2
+        dest: /usr/local/sbin/homelab-incident-backup-receive
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Install the backup verification command
+      ansible.builtin.template:
+        src: incident-backup-status.sh.j2
+        dest: /usr/local/sbin/homelab-incident-backup-status
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Install the backup service and timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop: [homelab-incident-backup.service, homelab-incident-backup.timer]
+      register: incident_backup_units
+
+    - name: Enable the backup timer
+      ansible.builtin.systemd_service:
+        name: homelab-incident-backup.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Create and verify the first off-host backup
+      ansible.builtin.systemd_service:
+        name: homelab-incident-backup.service
+        state: started
+      when: incident_backup_run_now | bool

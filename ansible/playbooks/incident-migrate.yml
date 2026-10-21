@@ -1,0 +1,533 @@
+---
+- name: Freeze Pangolin incident state and create the transfer image
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    incident_migration_dir: /tmp/homelab-incident-migration
+    incident_transfer: /var/tmp/homelab-incidents-migration.tar.zst
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Read the source service state
+      ansible.builtin.command:
+        argv: [systemctl, is-active, homelab-incidents.service]
+      register: incident_source_service_state
+      changed_when: false
+      failed_when: incident_source_service_state.stdout not in ['active', 'inactive', 'failed']
+
+    - name: Verify the source API before migration
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8790/healthz
+      when: incident_source_service_state.stdout == 'active'
+
+    - name: Check source database integrity and record its shape
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json, sqlite3
+            db = sqlite3.connect('file:/var/lib/homelab-incidents/incidents.db?mode=ro', uri=True)
+            db.row_factory = sqlite3.Row
+            integrity = db.execute('PRAGMA integrity_check').fetchone()[0]
+            assert integrity == 'ok', integrity
+            tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+            counts = {name: db.execute('SELECT count(*) FROM "' + name.replace('"', '""') + '"').fetchone()[0] for name in tables}
+            sources = [dict(row) for row in db.execute('SELECT id,generation,sequence FROM sources ORDER BY id')]
+            print(json.dumps({'integrity': integrity, 'counts': counts, 'sources': sources}, sort_keys=True))
+      register: incident_source_manifest_command
+      changed_when: false
+
+    - name: Retain the source manifest
+      ansible.builtin.set_fact:
+        incident_source_manifest: "{{ incident_source_manifest_command.stdout | from_json }}"
+
+    - name: Read incident and Matrix credentials for transfer
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      loop:
+        - {name: credentials, path: /etc/homelab-incidents/credentials.json}
+        - {name: zig_matrix, path: /etc/homelab-incidents/zig-matrix.json}
+        - {name: matrix_token, path: /etc/crowdsec-matrix-bridge/matrix-access-token}
+        - {name: matrix_room, path: /etc/crowdsec-matrix-bridge/matrix-room-vulnerabilities}
+      register: incident_migration_credentials
+      no_log: true
+
+    - name: Read the Pangolin SSH host identity
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: incident_migration_pangolin_host_key_file
+
+    - name: Publish the Pangolin SSH host identity
+      ansible.builtin.set_fact:
+        incident_migration_pangolin_host_key: "{{ incident_migration_pangolin_host_key_file.content | b64decode | trim }}"
+
+    - name: Create the private controller transfer directory
+      ansible.builtin.file:
+        path: "{{ incident_migration_dir }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      become: false
+
+    - name: Stop public ingestion before the final copy
+      ansible.builtin.systemd_service:
+        name: crowdsec-matrix-bridge.service
+        state: stopped
+
+    - name: Stop incident writers and maintenance
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      failed_when: false
+      loop:
+        - homelab-incidents-aliases.timer
+        - homelab-incidents-aliases.service
+        - homelab-incidents-helix-sync.timer
+        - homelab-incidents-helix-sync.service
+        - homelab-incidents-backup.timer
+        - homelab-incidents-backup.service
+        - homelab-incidents.service
+
+    - name: Compress the stopped SQLite database and its WAL
+      ansible.builtin.command:
+        argv:
+          - tar
+          - --create
+          - --zstd
+          - --file
+          - "{{ incident_transfer }}"
+          - --directory
+          - /var/lib/homelab-incidents
+          - incidents.db
+          - incidents.db-wal
+          - incidents.db-shm
+
+    - name: Record source and transfer hashes
+      ansible.builtin.command:
+        argv: [sha256sum, /var/lib/homelab-incidents/incidents.db, /var/lib/homelab-incidents/incidents.db-wal, "{{ incident_transfer }}"]
+      register: incident_transfer_hashes
+      changed_when: false
+
+    - name: Stream the final database transfer image to the controller
+      ansible.builtin.command:
+        argv:
+          - scp
+          - -p
+          - "root@{{ ansible_host }}:{{ incident_transfer }}"
+          - "{{ incident_migration_dir }}/incidents-state.tar.zst"
+      delegate_to: localhost
+      become: false
+
+- name: Restore and verify the replacement service
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    ansible_user: root
+    incident_migration_dir: /tmp/homelab-incident-migration
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+    - name: Install the base operating system and transfer tools
+      ansible.builtin.include_role:
+        name: common_baseline
+
+    - name: Install migration dependencies
+      ansible.builtin.apt:
+        name: [openssh-client, zstd]
+        state: present
+
+    - name: Create the incident service account
+      ansible.builtin.user:
+        name: homelab-incidents
+        system: true
+        home: /var/lib/homelab-incidents
+        shell: /usr/sbin/nologin
+
+    - name: Create replacement state and credential directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /var/lib/homelab-incidents, owner: homelab-incidents, group: homelab-incidents, mode: '0700'}
+        - {path: /etc/homelab-incidents, owner: root, group: homelab-incidents, mode: '0750'}
+        - {path: /etc/crowdsec-matrix-bridge, owner: root, group: homelab-incidents, mode: '0750'}
+
+    - name: Stop a partially installed replacement before restoring again
+      ansible.builtin.systemd_service:
+        name: homelab-incidents.service
+        state: stopped
+      failed_when: false
+
+    - name: Copy the final database transfer image
+      ansible.builtin.copy:
+        src: "{{ incident_migration_dir }}/incidents-state.tar.zst"
+        dest: /var/lib/homelab-incidents/incidents-state.tar.zst
+        owner: homelab-incidents
+        group: homelab-incidents
+        mode: '0600'
+
+    - name: Restore the final database and its WAL
+      ansible.builtin.command:
+        argv: [tar, --extract, --zstd, --file, /var/lib/homelab-incidents/incidents-state.tar.zst, --directory, /var/lib/homelab-incidents]
+
+    - name: Remove the transfer image from the replacement
+      ansible.builtin.file:
+        path: /var/lib/homelab-incidents/incidents-state.tar.zst
+        state: absent
+
+    - name: Protect the restored database files
+      ansible.builtin.file:
+        path: "/var/lib/homelab-incidents/{{ item }}"
+        owner: homelab-incidents
+        group: homelab-incidents
+        mode: '0600'
+      loop: [incidents.db, incidents.db-wal, incidents.db-shm]
+
+    - name: Restore transferred credentials
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ item.destination }}"
+        owner: root
+        group: homelab-incidents
+        mode: '0640'
+      no_log: true
+      loop:
+        - content: "{{ (hostvars[groups['tuwunel_servers'][0]].incident_migration_credentials.results | selectattr('item.name', 'equalto', 'credentials') | first).content | b64decode }}"
+          destination: /etc/homelab-incidents/credentials.json
+        - content: "{{ (hostvars[groups['tuwunel_servers'][0]].incident_migration_credentials.results | selectattr('item.name', 'equalto', 'zig_matrix') | first).content | b64decode }}"
+          destination: /etc/homelab-incidents/zig-matrix.json
+        - content: "{{ (hostvars[groups['tuwunel_servers'][0]].incident_migration_credentials.results | selectattr('item.name', 'equalto', 'matrix_token') | first).content | b64decode }}"
+          destination: /etc/crowdsec-matrix-bridge/matrix-access-token
+        - content: "{{ (hostvars[groups['tuwunel_servers'][0]].incident_migration_credentials.results | selectattr('item.name', 'equalto', 'matrix_room') | first).content | b64decode }}"
+          destination: /etc/crowdsec-matrix-bridge/matrix-room-vulnerabilities
+
+    - name: Verify the restored data before the service changes it
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json, sqlite3, sys
+            expected = json.loads(sys.argv[1])
+            db = sqlite3.connect('file:/var/lib/homelab-incidents/incidents.db?mode=ro', uri=True)
+            db.row_factory = sqlite3.Row
+            assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+            tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+            counts = {name: db.execute('SELECT count(*) FROM "' + name.replace('"', '""') + '"').fetchone()[0] for name in tables}
+            sources = [dict(row) for row in db.execute('SELECT id,generation,sequence FROM sources ORDER BY id')]
+            assert counts == expected['counts'], (counts, expected['counts'])
+            assert sources == expected['sources'], (sources, expected['sources'])
+            print(json.dumps({'integrity': 'ok', 'counts': counts, 'sources': sources}, sort_keys=True))
+          - "{{ hostvars[groups['tuwunel_servers'][0]].incident_source_manifest | to_json }}"
+      changed_when: false
+
+  roles:
+    - vulnerability_incidents
+
+  post_tasks:
+    - name: Create the reverse tunnel account
+      ansible.builtin.user:
+        name: incident-tunnel
+        system: true
+        home: /var/lib/incident-tunnel
+        create_home: true
+        shell: /usr/sbin/nologin
+
+    - name: Generate the dedicated reverse tunnel key
+      ansible.builtin.command:
+        argv: [ssh-keygen, -q, -t, ed25519, -N, '', -C, incident-api-reverse-tunnel, -f, /var/lib/incident-tunnel/id_ed25519]
+        creates: /var/lib/incident-tunnel/id_ed25519
+
+    - name: Protect the reverse tunnel key
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: incident-tunnel
+        group: incident-tunnel
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /var/lib/incident-tunnel/id_ed25519, mode: '0600'}
+        - {path: /var/lib/incident-tunnel/id_ed25519.pub, mode: '0644'}
+
+    - name: Read the reverse tunnel public key
+      ansible.builtin.slurp:
+        src: /var/lib/incident-tunnel/id_ed25519.pub
+      register: incident_tunnel_public_key_file
+
+    - name: Publish the reverse tunnel public key
+      ansible.builtin.set_fact:
+        incident_tunnel_public_key: "{{ incident_tunnel_public_key_file.content | b64decode | trim }}"
+
+- name: Authorize only the incident API loopback forward
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Create the locked incident forwarding account
+      ansible.builtin.user:
+        name: incident-forward
+        system: true
+        home: /var/lib/incident-forward
+        create_home: true
+        shell: /bin/false
+        password_lock: true
+
+    - name: Create the forwarding SSH directory
+      ansible.builtin.file:
+        path: /var/lib/incident-forward/.ssh
+        state: directory
+        owner: incident-forward
+        group: incident-forward
+        mode: '0700'
+
+    - name: Authorize only the loopback listener
+      ansible.builtin.copy:
+        content: >-
+          no-agent-forwarding,no-X11-forwarding,no-pty,permitlisten="127.0.0.1:8790"
+          {{ hostvars[groups['incident_servers'][0]].incident_tunnel_public_key }}
+        dest: /var/lib/incident-forward/.ssh/authorized_keys
+        owner: incident-forward
+        group: incident-forward
+        mode: '0600'
+
+- name: Start the replacement reverse tunnel
+  hosts: incident_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Pin the Pangolin SSH host identity
+      ansible.builtin.copy:
+        content: "198.51.100.24 {{ hostvars[groups['tuwunel_servers'][0]].incident_migration_pangolin_host_key }}\n"
+        dest: /var/lib/incident-tunnel/known_hosts
+        owner: incident-tunnel
+        group: incident-tunnel
+        mode: '0600'
+
+    - name: Install the reverse tunnel service
+      ansible.builtin.template:
+        src: ../roles/vulnerability_incidents/templates/homelab-incidents-reverse-tunnel.service.j2
+        dest: /etc/systemd/system/homelab-incidents-reverse-tunnel.service
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Start the reverse tunnel service
+      ansible.builtin.systemd_service:
+        name: homelab-incidents-reverse-tunnel.service
+        enabled: true
+        state: restarted
+        daemon_reload: true
+
+- name: Cut public ingestion over to the replacement
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Verify the replacement through the Pangolin loopback listener
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8790/healthz
+      register: replacement_tunnel_health
+      until: replacement_tunnel_health.status == 200
+      retries: 15
+      delay: 2
+
+    - name: Resume the stateless public bridge
+      ansible.builtin.systemd_service:
+        name: crowdsec-matrix-bridge.service
+        state: started
+
+- name: Verify the cutover from an independent guest
+  hosts: network_ops
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Exercise the deployed off-host health check
+      ansible.builtin.systemd_service:
+        name: homelab-incidents-health.service
+        state: started
+
+    - name: Read the successful health result
+      ansible.builtin.command:
+        argv: [systemctl, is-failed, homelab-incidents-health.service]
+      register: incident_migration_health_result
+      changed_when: false
+      failed_when: incident_migration_health_result.stdout != 'inactive'
+
+- import_playbook: incident-backup.yml
+
+- name: Read the retained backup transport key for history transfer
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Read the retained backup transport public key
+      ansible.builtin.slurp:
+        src: /etc/incident-backup/id_ed25519.pub
+      register: incident_history_transport_key_file
+
+    - name: Publish the retained backup transport public key
+      ansible.builtin.set_fact:
+        incident_backup_receiver_public_key: "{{ incident_history_transport_key_file.content | b64decode | trim }}"
+
+- name: Expose the retired Pangolin history through a one-use export
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Read the Pangolin SSH host identity for history transfer
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: incident_history_pangolin_host_key_file
+
+    - name: Publish the Pangolin SSH host identity for history transfer
+      ansible.builtin.set_fact:
+        incident_migration_pangolin_host_key: "{{ incident_history_pangolin_host_key_file.content | b64decode | trim }}"
+
+    - name: Install the one-use history export
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/homelab-incident-history-export
+        owner: root
+        group: root
+        mode: '0700'
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          tar --create --zstd --file=- --directory=/ \
+            var/backups/homelab-incidents \
+            var/lib/helix-cve \
+            etc/homelab-incidents \
+            usr/local/lib/homelab-incidents \
+            etc/systemd/system/homelab-incidents.service \
+            etc/systemd/system/homelab-incidents-aliases.service \
+            etc/systemd/system/homelab-incidents-aliases.timer \
+            etc/systemd/system/homelab-incidents-helix-sync.service \
+            etc/systemd/system/homelab-incidents-helix-sync.timer
+
+    - name: Authorize only the one-use history export
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        regexp: 'incident-history-transfer@plan-runner$'
+        line: >-
+          restrict,command="/usr/local/sbin/homelab-incident-history-export"
+          {{ hostvars[groups['plan_runners'][0]].incident_backup_receiver_public_key | regex_replace('incident-backup@plan-runner$', 'incident-history-transfer@plan-runner') }}
+
+- name: Store and verify the retired Pangolin history off-host
+  hosts: plan_runners
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Pin the Pangolin host key for the one-use transfer
+      ansible.builtin.copy:
+        content: "198.51.100.24 {{ hostvars[groups['tuwunel_servers'][0]].incident_migration_pangolin_host_key }}\n"
+        dest: /etc/incident-backup/pangolin-known-hosts
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Pull and encrypt the retired incident history
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          stamp=$(date -u +%Y%m%dT%H%M%SZ)
+          partial="/var/lib/incident-backups/.pangolin-history-$stamp.tar.zst.age.partial"
+          final="/var/lib/incident-backups/pangolin-history-$stamp.tar.zst.age"
+          trap 'rm -f "$partial"' EXIT HUP INT TERM
+          ssh -T -i /etc/incident-backup/id_ed25519 \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile=/etc/incident-backup/pangolin-known-hosts \
+            root@198.51.100.24 \
+            | age --encrypt -R /etc/incident-backup/age-recipient.txt -o "$partial"
+          test -s "$partial"
+          age --decrypt -i /etc/incident-backup/age-identity.txt "$partial" | zstd --test --quiet
+          mv "$partial" "$final"
+          trap - EXIT
+        executable: /bin/bash
+
+    - name: Re-run the bounded backup policy after adding history
+      ansible.builtin.command:
+        argv: [/usr/local/sbin/homelab-incident-backup-receive]
+
+- name: Remove the one-use Pangolin history export
+  hosts: tuwunel_servers
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Remove the one-use authorized key
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        regexp: 'incident-history-transfer@plan-runner$'
+        state: absent
+
+    - name: Remove the one-use export command
+      ansible.builtin.file:
+        path: /usr/local/sbin/homelab-incident-history-export
+        state: absent
+
+- import_playbook: incident-pangolin-cleanup.yml
+
+- name: Remove the controller transfer copy
+  hosts: localhost
+  become: false
+  gather_facts: false
+  pre_tasks:
+    - name: Require explicit opt-in to the retired custom CVE pipeline
+      ansible.builtin.import_role:
+        name: legacy_cve_guard
+      tags: [always]
+  tasks:
+    - name: Remove the private migration directory
+      ansible.builtin.file:
+        path: /tmp/homelab-incident-migration
+        state: absent
